@@ -1,0 +1,231 @@
+const express = require("express");
+const {
+  createProductForAdmin,
+  createServiceForAdmin,
+  createHomeCategoryForAdmin,
+  createStaffForAdmin,
+  deleteProductForAdmin,
+  deleteHomeCategoryForAdmin,
+  deleteReviewForAdmin,
+  deleteServiceForAdmin,
+  deleteStaffForAdmin,
+  getAdminMe,
+  getAdminSetupStatusController,
+  getCustomerForAdmin,
+  getHomeCategoryForAdmin,
+  getOrderForAdmin,
+  getProductForAdmin,
+  getServiceForAdmin,
+  listCustomersForAdmin,
+  listHomeCategoriesForAdmin,
+  listOrdersForAdmin,
+  listProductsForAdmin,
+  listReviewsForAdmin,
+  listServicesForAdmin,
+  listStaffForAdmin,
+  listTransactionsForAdmin,
+  loginAdmin,
+  setupInitialAdminOwnerController,
+  updateCustomerForAdmin,
+  updateHomeCategoryForAdmin,
+  updateOrderForAdmin,
+  updateProductForAdmin,
+  updateReviewForAdmin,
+  updateServiceForAdmin,
+  updateStaffForAdmin,
+} = require("../controllers/admin.controller");
+const {
+  requireStaffAuth,
+  requireStaffRoles,
+} = require("../middleware/staff-auth.middleware");
+
+const router = express.Router();
+
+router.post("/auth/login", loginAdmin);
+router.get("/auth/setup-status", getAdminSetupStatusController);
+router.post("/auth/setup", setupInitialAdminOwnerController);
+router.get("/auth/me", requireStaffAuth, getAdminMe);
+
+router.get(
+  "/home-categories",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  listHomeCategoriesForAdmin,
+);
+router.post(
+  "/home-categories",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  createHomeCategoryForAdmin,
+);
+router.get(
+  "/home-categories/:itemId",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  getHomeCategoryForAdmin,
+);
+router.patch(
+  "/home-categories/:itemId",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  updateHomeCategoryForAdmin,
+);
+router.delete(
+  "/home-categories/:itemId",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  deleteHomeCategoryForAdmin,
+);
+
+router.get(
+  "/products",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  listProductsForAdmin,
+);
+router.post(
+  "/products",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  createProductForAdmin,
+);
+router.get(
+  "/products/:productId",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  getProductForAdmin,
+);
+router.patch(
+  "/products/:productId",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  updateProductForAdmin,
+);
+router.delete(
+  "/products/:productId",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  deleteProductForAdmin,
+);
+
+router.get(
+  "/services",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  listServicesForAdmin,
+);
+router.post(
+  "/services",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  createServiceForAdmin,
+);
+router.get(
+  "/services/:serviceId",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  getServiceForAdmin,
+);
+router.patch(
+  "/services/:serviceId",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  updateServiceForAdmin,
+);
+router.delete(
+  "/services/:serviceId",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  deleteServiceForAdmin,
+);
+
+router.get(
+  "/reviews",
+  requireStaffAuth,
+  requireStaffRoles(["support"]),
+  listReviewsForAdmin,
+);
+router.patch(
+  "/reviews/:reviewId",
+  requireStaffAuth,
+  requireStaffRoles(["support"]),
+  updateReviewForAdmin,
+);
+router.delete(
+  "/reviews/:reviewId",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  deleteReviewForAdmin,
+);
+
+router.get(
+  "/transactions",
+  requireStaffAuth,
+  requireStaffRoles(["operations"]),
+  listTransactionsForAdmin,
+);
+
+router.get(
+  "/orders",
+  requireStaffAuth,
+  requireStaffRoles(["operations"]),
+  listOrdersForAdmin,
+);
+router.get(
+  "/orders/:orderId",
+  requireStaffAuth,
+  requireStaffRoles(["operations"]),
+  getOrderForAdmin,
+);
+router.patch(
+  "/orders/:orderId",
+  requireStaffAuth,
+  requireStaffRoles(["operations"]),
+  updateOrderForAdmin,
+);
+
+router.get(
+  "/customers",
+  requireStaffAuth,
+  requireStaffRoles(["support"]),
+  listCustomersForAdmin,
+);
+router.get(
+  "/customers/:customerId",
+  requireStaffAuth,
+  requireStaffRoles(["support"]),
+  getCustomerForAdmin,
+);
+router.patch(
+  "/customers/:customerId",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  updateCustomerForAdmin,
+);
+
+router.get(
+  "/staff",
+  requireStaffAuth,
+  requireStaffRoles(["admin"]),
+  listStaffForAdmin,
+);
+router.post(
+  "/staff",
+  requireStaffAuth,
+  requireStaffRoles(["admin"]),
+  createStaffForAdmin,
+);
+router.patch(
+  "/staff/:staffId",
+  requireStaffAuth,
+  requireStaffRoles(["admin"]),
+  updateStaffForAdmin,
+);
+router.delete(
+  "/staff/:staffId",
+  requireStaffAuth,
+  requireStaffRoles(["admin"]),
+  deleteStaffForAdmin,
+);
+
+module.exports = router;

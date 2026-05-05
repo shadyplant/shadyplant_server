@@ -1,0 +1,219 @@
+const { query } = require("../config/postgres");
+const { generateId } = require("../utils/crypto");
+const { buildUpdateStatement } = require("../utils/sql");
+const mapOrderRow = (row) => {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    orderNumber: row.order_number,
+    trackingCode: row.tracking_code,
+    userId: row.user_id,
+    fullName: row.full_name,
+    email: row.email,
+    phoneNumber: row.phone_number,
+    deliveryAddress: row.delivery_address || {},
+    deliveryDate: row.delivery_date instanceof Date
+      ? row.delivery_date.toISOString()
+      : row.delivery_date,
+    quantitySqft: row.quantity_sqft,
+    distanceKm: Number(row.distance_km),
+    vehicle: row.vehicle || {},
+    orderItems: row.order_items || [],
+    recommendedItems: row.recommended_items || [],
+    billingDetails: row.billing_details || {},
+    deliveryLocation: row.delivery_location || {},
+    paymentMethod: row.payment_method,
+    paymentStatus: row.payment_status,
+    paymentDetails: row.payment_details || {},
+    pricing: row.pricing || {},
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+};
+
+const createOrder = async (orderData) => {
+  const id = generateId();
+  const year = new Date().getFullYear();
+  const uniqueSuffix = Date.now().toString().slice(-6);
+
+  const order = {
+    orderNumber: `GGN-${year}-${uniqueSuffix}`,
+    trackingCode: `TRK-${Date.now().toString().slice(-8)}`,
+    ...orderData,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  await query(
+    `INSERT INTO orders (
+      id,
+      order_number,
+      tracking_code,
+      user_id,
+      full_name,
+      email,
+      phone_number,
+      delivery_address,
+      delivery_date,
+      quantity_sqft,
+      distance_km,
+      vehicle,
+      order_items,
+      recommended_items,
+      billing_details,
+      delivery_location,
+      payment_method,
+      payment_status,
+      payment_details,
+      pricing,
+      created_at,
+      updated_at
+    ) VALUES (
+      $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12::jsonb, $13::jsonb,
+      $14::jsonb, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20::jsonb, $21, $22
+    )`,
+    [
+      id,
+      order.orderNumber,
+      order.trackingCode,
+      order.userId,
+      order.fullName,
+      order.email,
+      order.phoneNumber,
+      JSON.stringify(order.deliveryAddress),
+      order.deliveryDate,
+      order.quantitySqft,
+      order.distanceKm,
+      JSON.stringify(order.vehicle),
+      JSON.stringify(order.orderItems || []),
+      JSON.stringify(order.recommendedItems || []),
+      JSON.stringify(order.billingDetails || {}),
+      JSON.stringify(order.deliveryLocation || {}),
+      order.paymentMethod,
+      order.paymentStatus,
+      JSON.stringify(order.paymentDetails || {}),
+      JSON.stringify(order.pricing || {}),
+      order.createdAt,
+      order.updatedAt,
+    ],
+  );
+
+  return {
+    id,
+    ...order,
+  };
+};
+
+const listOrdersByUserId = async (userId) => {
+  const result = await query(
+    "SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC",
+    [userId],
+  );
+  return result.rows.map(mapOrderRow).filter(Boolean);
+};
+
+const findOrderById = async (orderId) => {
+  const result = await query("SELECT * FROM orders WHERE id = $1 LIMIT 1", [
+    orderId,
+  ]);
+  return mapOrderRow(result.rows[0]);
+};
+
+const listAllOrders = async () => {
+  const result = await query(
+    "SELECT * FROM orders ORDER BY created_at DESC",
+    [],
+  );
+
+  return result.rows.map(mapOrderRow).filter(Boolean);
+};
+
+const updateOrder = async (orderId, updates) => {
+  const statement = buildUpdateStatement(
+    {
+      fullName: updates.fullName,
+      email: updates.email,
+      phoneNumber: updates.phoneNumber,
+      deliveryAddress:
+        updates.deliveryAddress !== undefined
+          ? JSON.stringify(updates.deliveryAddress || {})
+          : undefined,
+      deliveryDate: updates.deliveryDate,
+      quantitySqft: updates.quantitySqft,
+      distanceKm: updates.distanceKm,
+      vehicle:
+        updates.vehicle !== undefined
+          ? JSON.stringify(updates.vehicle || {})
+          : undefined,
+      orderItems:
+        updates.orderItems !== undefined
+          ? JSON.stringify(updates.orderItems || [])
+          : undefined,
+      recommendedItems:
+        updates.recommendedItems !== undefined
+          ? JSON.stringify(updates.recommendedItems || [])
+          : undefined,
+      billingDetails:
+        updates.billingDetails !== undefined
+          ? JSON.stringify(updates.billingDetails || {})
+          : undefined,
+      deliveryLocation:
+        updates.deliveryLocation !== undefined
+          ? JSON.stringify(updates.deliveryLocation || {})
+          : undefined,
+      paymentMethod: updates.paymentMethod,
+      paymentStatus: updates.paymentStatus,
+      paymentDetails:
+        updates.paymentDetails !== undefined
+          ? JSON.stringify(updates.paymentDetails || {})
+          : undefined,
+      pricing:
+        updates.pricing !== undefined
+          ? JSON.stringify(updates.pricing || {})
+          : undefined,
+      updatedAt: new Date(),
+    },
+    {
+      fullName: "full_name",
+      phoneNumber: "phone_number",
+      deliveryAddress: { column: "delivery_address", cast: "jsonb" },
+      deliveryDate: "delivery_date",
+      quantitySqft: "quantity_sqft",
+      distanceKm: "distance_km",
+      vehicle: { column: "vehicle", cast: "jsonb" },
+      orderItems: { column: "order_items", cast: "jsonb" },
+      recommendedItems: { column: "recommended_items", cast: "jsonb" },
+      billingDetails: { column: "billing_details", cast: "jsonb" },
+      deliveryLocation: { column: "delivery_location", cast: "jsonb" },
+      paymentMethod: "payment_method",
+      paymentStatus: "payment_status",
+      paymentDetails: { column: "payment_details", cast: "jsonb" },
+      pricing: { column: "pricing", cast: "jsonb" },
+      updatedAt: "updated_at",
+    },
+  );
+
+  if (!statement) {
+    return findOrderById(orderId);
+  }
+
+  await query(
+    `UPDATE orders SET ${statement.setClause} WHERE id = $${
+      statement.values.length + 1
+    }`,
+    [...statement.values, orderId],
+  );
+
+  return findOrderById(orderId);
+};
+
+module.exports = {
+  createOrder,
+  findOrderById,
+  listAllOrders,
+  listOrdersByUserId,
+  updateOrder,
+};

@@ -1,0 +1,10 @@
+[
+  {
+    "productId": "PRD123456789",
+    "images": [
+      "https://example.com/real-image-1.jpg",
+      "https://example.com/real-image-2.jpg",
+      "https://example.com/real-image-3.jpg"
+    ]
+  }
+]
