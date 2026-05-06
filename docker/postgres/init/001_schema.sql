@@ -99,6 +99,20 @@ CREATE TABLE IF NOT EXISTS orders (
   delivery_location JSONB NOT NULL DEFAULT '{}'::jsonb,
   payment_method TEXT NOT NULL,
   payment_status TEXT NOT NULL,
+  current_status TEXT NOT NULL DEFAULT 'confirmed'
+    CHECK (
+      current_status IN (
+        'placed',
+        'confirmed',
+        'preparing',
+        'scheduled',
+        'dispatched',
+        'shipped',
+        'out_for_delivery',
+        'delivered'
+      )
+    ),
+  tracking_timeline JSONB NOT NULL DEFAULT '[]'::jsonb,
   payment_details JSONB NOT NULL DEFAULT '{}'::jsonb,
   pricing JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -116,6 +130,33 @@ ALTER TABLE orders
 
 ALTER TABLE orders
   ADD COLUMN IF NOT EXISTS delivery_location JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE orders
+  ADD COLUMN IF NOT EXISTS current_status TEXT NOT NULL DEFAULT 'confirmed';
+
+ALTER TABLE orders
+  ALTER COLUMN current_status SET DEFAULT 'confirmed';
+
+ALTER TABLE orders
+  ADD COLUMN IF NOT EXISTS tracking_timeline JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+ALTER TABLE orders
+  DROP CONSTRAINT IF EXISTS orders_current_status_check;
+
+ALTER TABLE orders
+  ADD CONSTRAINT orders_current_status_check
+  CHECK (
+    current_status IN (
+      'placed',
+      'confirmed',
+      'preparing',
+      'scheduled',
+      'dispatched',
+      'shipped',
+      'out_for_delivery',
+      'delivered'
+    )
+  );
 
 CREATE TABLE IF NOT EXISTS payment_attempts (
   id UUID PRIMARY KEY,

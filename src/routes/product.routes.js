@@ -1,6 +1,7 @@
 const express = require("express");
 const {
   getProduct,
+  getMyReview,
   listMyProductStockAlerts,
   listProductReviews,
   listProducts,
@@ -13,6 +14,7 @@ const router = express.Router();
 
 router.get("/", listProducts);
 router.get("/stock-alerts/me", requireAuth, listMyProductStockAlerts);
+router.get("/:productId/reviews/mine", requireAuth, getMyReview);
 router.get("/:productId/reviews", listProductReviews);
 router.post("/:productId/reviews", requireAuth, submitProductReview);
 router.post("/:productId/stock-alerts", requireAuth, submitProductStockAlert);

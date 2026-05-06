@@ -8,6 +8,7 @@
     "db:down": "docker compose down",
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
+    "mailer:test": "node src/scripts/test-mailer.js",
     "products:backfill": "node src/scripts/backfill-product-catalog.js"
   },
   "dependencies": {
@@ -25,6 +26,7 @@
     "mongoose": "^9.4.1",
     "node-cache": "^5.1.2",
     "nodemailer": "^8.0.6",
+    "pdfkit": "^0.18.0",
     "pg": "^8.20.0",
     "redis": "^5.12.1"
   }

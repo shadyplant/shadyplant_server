@@ -358,89 +358,6 @@ const resolveProductVariant = (product = {}, payload = {}) => {
   };
 };
 
-const parsePackMeasurement = (packLabel = "") => {
-  const match = String(packLabel || "")
-    .trim()
-    .match(/(\d+(?:\.\d+)?)\s*(sq\s*ft|sqft|cm|inch|inches|inch|in|ft|feet|foot|gallon|gallons|gal)\b/i);
-
-  if (!match) {
-    return null;
-  }
-
-  return {
-    value: Number(match[1]),
-    unit: normalizeDisplayUnit(match[2]),
-  };
-};
-
-const buildLegacyProductOptionGroups = (product = {}) => {
-  const productCategory = String(product.category || "").trim();
-  const normalizedPackMeasurement = parsePackMeasurement(product.packLabel);
-
-  if (productCategory === "Lawn Grass") {
-    const currentCoverageValue = normalizedPackMeasurement?.value ?? 20;
-    const currentCoverageUnit = normalizedPackMeasurement?.unit || "sq ft";
-
-    return normalizeProductOptionGroups({
-      optionGroups: [
-        {
-          key: "coverage",
-          title: "Select Coverage",
-          subtitle: "Choose the option that fits your space best",
-          guideLabel: "Coverage guide",
-          options: [
-            { value: 10, unit: currentCoverageUnit },
-            {
-              value: currentCoverageValue,
-              unit: currentCoverageUnit,
-              note: "Popular",
-              isDefault: true,
-            },
-            { value: 40, unit: currentCoverageUnit, note: "Best value" },
-            { value: 80, unit: currentCoverageUnit, isDisabled: true },
-          ],
-        },
-      ],
-    });
-  }
-
-  if (productCategory === "Indoor Plants" || productCategory === "Ferns") {
-    return normalizeProductOptionGroups({
-      optionGroups: [
-        {
-          key: "size",
-          title: "Select Size",
-          subtitle: "Choose the option that fits your space best",
-          guideLabel: productCategory === "Ferns" ? "Pot size guide" : "Plant size guide",
-          options: [
-            { label: "S" },
-            { label: "M", note: "Ready now" },
-            { label: "L", isDefault: true },
-            { label: "XL", note: "Low stock" },
-          ],
-        },
-      ],
-    });
-  }
-
-  return normalizeProductOptionGroups({
-    optionGroups: [
-      {
-        key: "size",
-        title: "Select Size",
-        subtitle: "Choose the option that fits your space best",
-        guideLabel: "Plant size guide",
-        options: [
-          { label: "S" },
-          { label: "M", isDefault: true },
-          { label: "L", note: "Low stock" },
-          { label: "XL", isDisabled: true },
-        ],
-      },
-    ],
-  });
-};
-
 const prepareProductForStorage = (product = {}) => {
   const id =
     String(product.id || "").trim() ||
@@ -540,10 +457,7 @@ const serializeProduct = (product) => {
     images,
     tags,
     videoClips: normalizeProductVideoClips(product),
-    optionGroups:
-      normalizeProductOptionGroups(product).length > 0
-        ? normalizeProductOptionGroups(product)
-        : buildLegacyProductOptionGroups(product),
+    optionGroups: normalizeProductOptionGroups(product),
   };
 };
 
@@ -1045,41 +959,7 @@ const syncProductStockValues = async (seedProducts = []) => {
   return updatedCount;
 };
 
-const syncProductOptionGroups = async (seedProducts = []) => {
-  const seedOptionGroupsById = new Map(
-    seedProducts.map((product) => [
-      String(product.id || "").trim(),
-      normalizeProductOptionGroups(product),
-    ]),
-  );
-  const products = await Product.find({});
-  let updatedCount = 0;
-
-  for (const product of products) {
-    const currentOptionGroups = normalizeProductOptionGroups(product.toObject());
-
-    if (currentOptionGroups.length > 0) {
-      continue;
-    }
-
-    const seededOptionGroups =
-      seedOptionGroupsById.get(String(product.id || "").trim()) || [];
-    const nextOptionGroups =
-      seededOptionGroups.length > 0
-        ? seededOptionGroups
-        : buildLegacyProductOptionGroups(product.toObject());
-
-    if (!nextOptionGroups.length) {
-      continue;
-    }
-
-    product.optionGroups = nextOptionGroups;
-    await product.save();
-    updatedCount += 1;
-  }
-
-  return updatedCount;
-};
+const syncProductOptionGroups = async () => 0;
 
 const applyProductGalleryImport = async (galleryEntries = []) => {
   if (!Array.isArray(galleryEntries) || !galleryEntries.length) {

@@ -2,6 +2,7 @@ const {
   createProductStockAlert,
   createProductReview,
   getProductDetails,
+  getMyProductReview,
   getMyProductStockAlerts,
   getProductReviews,
   getProducts,
@@ -48,6 +49,18 @@ const submitProductReview = asyncHandler(async (req, res) => {
   });
 });
 
+const getMyReview = asyncHandler(async (req, res) => {
+  const reviewData = await getMyProductReview(
+    req.auth.userId,
+    req.params.productId,
+  );
+
+  res.status(200).json({
+    message: "Your product review fetched successfully.",
+    data: reviewData,
+  });
+});
+
 const listMyProductStockAlerts = asyncHandler(async (req, res) => {
   const stockAlerts = await getMyProductStockAlerts(req.auth.userId);
 
@@ -71,6 +84,7 @@ const submitProductStockAlert = asyncHandler(async (req, res) => {
 
 module.exports = {
   getProduct,
+  getMyReview,
   listMyProductStockAlerts,
   listProductReviews,
   listProducts,

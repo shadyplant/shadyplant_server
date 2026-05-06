@@ -2,6 +2,7 @@ const nodemailer = require("nodemailer");
 const { env } = require("../config/env");
 const {
   renderGreetingsTemplate,
+  renderOrderStatusTemplate,
   renderOffersTemplate,
   renderOtpTemplate,
   templateRenderers,
@@ -63,7 +64,47 @@ const renderTemplateMessage = (templateName, payload) => {
   return renderTemplate(payload);
 };
 
-const sendEmail = async ({ to, subject, html, text, tags = [], metadata = {} }) => {
+const normalizeAttachments = (attachments) => {
+  if (!Array.isArray(attachments)) {
+    return [];
+  }
+
+  return attachments
+    .map((attachment) => {
+      if (!attachment || typeof attachment !== "object") {
+        return null;
+      }
+
+      const filename = String(attachment.filename || "").trim();
+
+      if (!filename) {
+        return null;
+      }
+
+      return {
+        filename,
+        content: attachment.content,
+        contentType: attachment.contentType
+          ? String(attachment.contentType).trim()
+          : undefined,
+        encoding: attachment.encoding
+          ? String(attachment.encoding).trim()
+          : undefined,
+        path: attachment.path ? String(attachment.path).trim() : undefined,
+      };
+    })
+    .filter(Boolean);
+};
+
+const sendEmail = async ({
+  to,
+  subject,
+  html,
+  text,
+  tags = [],
+  metadata = {},
+  attachments = [],
+}) => {
   const recipients = normalizeRecipients(to);
 
   if (!recipients.length) {
@@ -79,6 +120,7 @@ const sendEmail = async ({ to, subject, html, text, tags = [], metadata = {} }) 
     text: String(text || "").trim(),
     tags,
     metadata,
+    attachments: normalizeAttachments(attachments),
   };
 
   if (!message.subject) {
@@ -104,6 +146,10 @@ const sendEmail = async ({ to, subject, html, text, tags = [], metadata = {} }) 
       subject: message.subject,
       tags,
       metadata,
+      attachments: message.attachments.map((attachment) => ({
+        filename: attachment.filename,
+        contentType: attachment.contentType || null,
+      })),
     });
 
     return {
@@ -128,6 +174,7 @@ const sendEmail = async ({ to, subject, html, text, tags = [], metadata = {} }) 
             "X-Email-Tags": tags.join(","),
           }
         : undefined,
+      attachments: message.attachments.length ? message.attachments : undefined,
     });
 
     return {
@@ -188,13 +235,23 @@ const sendOfferEmail = async ({ to, ...payload }) =>
     tags: ["offers"],
   });
 
+const sendOrderStatusEmail = async ({ to, ...payload }) =>
+  sendTemplateEmail({
+    to,
+    templateName: "orderStatus",
+    payload,
+    tags: ["order-status"],
+  });
+
 module.exports = {
   renderGreetingsTemplate,
+  renderOrderStatusTemplate,
   renderOffersTemplate,
   renderOtpTemplate,
   renderTemplateMessage,
   sendEmail,
   sendGreetingEmail,
+  sendOrderStatusEmail,
   sendOfferEmail,
   sendOtpEmail,
   sendTemplateEmail,

@@ -13,6 +13,7 @@ const {
 const {
   REVIEW_STATUSES,
   createOrUpdateProductReview,
+  findProductReviewByProductIdAndUserId,
   hasUserPurchasedProduct,
   listApprovedReviewsByProductId,
 } = require("../repositories/product-review.repository");
@@ -176,6 +177,35 @@ const createProductReview = async (userId, productId, payload = {}) => {
   };
 };
 
+const getMyProductReview = async (userId, productId) => {
+  const product = await getProductDetails(productId);
+  const review = await findProductReviewByProductIdAndUserId(product.id, userId);
+
+  if (!review) {
+    return {
+      productId: product.id,
+      review: null,
+    };
+  }
+
+  return {
+    productId: product.id,
+    review: {
+      id: review.id,
+      author: review.authorName,
+      location: review.authorLocation,
+      date: review.createdAt,
+      rating: review.rating,
+      title: review.title,
+      body: review.body,
+      helpfulCount: review.helpfulCount,
+      verifiedBuyer: review.verifiedBuyer,
+      status: review.status,
+      updatedAt: review.updatedAt,
+    },
+  };
+};
+
 const createProductStockAlert = async (userId, productId) => {
   const product = await getProductDetails(productId);
   const user = await findUserById(userId);
@@ -250,6 +280,7 @@ module.exports = {
   createProductStockAlert,
   createProductReview,
   getProductReviews,
+  getMyProductReview,
   getProductDetails,
   getMyProductStockAlerts,
   getProducts,

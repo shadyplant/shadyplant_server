@@ -50,7 +50,15 @@ const { env } = require("../config/env");
 const { ApiError } = require("../utils/apiError");
 const { comparePassword, hashPassword, validatePasswordStrength } = require("../utils/password");
 const { isValidEmail, isValidPhoneNumber, normalizeEmail } = require("../utils/validators");
-const { serializeOrder } = require("./order.service");
+const {
+  ORDER_STATUS_KEYS,
+  appendTrackingEntryToStatus,
+  ensureTrackingStatusEntry,
+  notifyOrderPrimaryStatus,
+  normalizeOrderCurrentStatus,
+  normalizeStoredTrackingTimeline,
+  serializeOrder,
+} = require("./order.service");
 const { seedHomeCategoryItemsForOrganization } = require("./home-category.service");
 const { signStaffAccessToken } = require("./token.service");
 
@@ -873,7 +881,10 @@ const updateAdminOrder = async (orderId, payload = {}) => {
     throw new ApiError(404, "Order not found.");
   }
 
+  const previousStatus = normalizeOrderCurrentStatus(currentOrder.currentStatus);
   const updates = {};
+  let nextTrackingTimeline;
+  const nowIso = new Date().toISOString();
 
   if (payload.fullName !== undefined) {
     updates.fullName = String(payload.fullName || "").trim();
@@ -907,6 +918,49 @@ const updateAdminOrder = async (orderId, payload = {}) => {
     updates.paymentStatus = String(payload.paymentStatus || "").trim();
   }
 
+  if (payload.currentStatus !== undefined) {
+    const currentStatus = normalizeOrderCurrentStatus(payload.currentStatus);
+
+    if (!currentStatus || !ORDER_STATUS_KEYS.includes(currentStatus)) {
+      throw new ApiError(400, "Order status is invalid.");
+    }
+
+    updates.currentStatus = currentStatus;
+    nextTrackingTimeline = ensureTrackingStatusEntry(
+      currentOrder.trackingTimeline || [],
+      currentStatus,
+      nowIso,
+    );
+  }
+
+  if (payload.trackingEventMessage !== undefined) {
+    const trackingEventMessage = String(payload.trackingEventMessage || "").trim();
+    const trackingEventStatus = normalizeOrderCurrentStatus(
+      payload.trackingEventStatus || updates.currentStatus || currentOrder.currentStatus || "",
+    );
+
+    if (trackingEventMessage) {
+      if (!trackingEventStatus || !ORDER_STATUS_KEYS.includes(trackingEventStatus)) {
+        throw new ApiError(400, "Tracking event status is invalid.");
+      }
+
+      nextTrackingTimeline = appendTrackingEntryToStatus(
+        nextTrackingTimeline || currentOrder.trackingTimeline || [],
+        trackingEventStatus,
+        trackingEventMessage,
+        nowIso,
+      );
+    }
+  }
+
+  if (payload.trackingTimeline !== undefined && Array.isArray(payload.trackingTimeline)) {
+    nextTrackingTimeline = normalizeStoredTrackingTimeline(payload.trackingTimeline);
+  }
+
+  if (nextTrackingTimeline !== undefined) {
+    updates.trackingTimeline = nextTrackingTimeline;
+  }
+
   ["deliveryAddress", "vehicle", "orderItems", "recommendedItems", "billingDetails", "deliveryLocation", "paymentDetails", "pricing"].forEach((key) => {
     if (payload[key] !== undefined) {
       updates[key] =
@@ -915,7 +969,14 @@ const updateAdminOrder = async (orderId, payload = {}) => {
   });
 
   const updatedOrder = await updateOrder(orderId, updates);
-  return serializeOrder(updatedOrder);
+  const serializedOrder = serializeOrder(updatedOrder);
+  const nextStatus = normalizeOrderCurrentStatus(serializedOrder.currentStatus);
+
+  if (nextStatus && nextStatus !== previousStatus) {
+    await notifyOrderPrimaryStatus(serializedOrder, nextStatus);
+  }
+
+  return serializedOrder;
 };
 
 const listAdminCustomers = async () => (await listUsers()).map(sanitizeCustomer);

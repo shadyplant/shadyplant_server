@@ -27,6 +27,8 @@ const mapOrderRow = (row) => {
     deliveryLocation: row.delivery_location || {},
     paymentMethod: row.payment_method,
     paymentStatus: row.payment_status,
+    currentStatus: row.current_status || "confirmed",
+    trackingTimeline: row.tracking_timeline || [],
     paymentDetails: row.payment_details || {},
     pricing: row.pricing || {},
     createdAt: row.created_at,
@@ -67,13 +69,15 @@ const createOrder = async (orderData) => {
       delivery_location,
       payment_method,
       payment_status,
+      current_status,
+      tracking_timeline,
       payment_details,
       pricing,
       created_at,
       updated_at
     ) VALUES (
       $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12::jsonb, $13::jsonb,
-      $14::jsonb, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20::jsonb, $21, $22
+      $14::jsonb, $15::jsonb, $16::jsonb, $17, $18, $19, $20::jsonb, $21::jsonb, $22::jsonb, $23, $24
     )`,
     [
       id,
@@ -94,6 +98,8 @@ const createOrder = async (orderData) => {
       JSON.stringify(order.deliveryLocation || {}),
       order.paymentMethod,
       order.paymentStatus,
+      order.currentStatus || "confirmed",
+      JSON.stringify(order.trackingTimeline || []),
       JSON.stringify(order.paymentDetails || {}),
       JSON.stringify(order.pricing || {}),
       order.createdAt,
@@ -166,6 +172,11 @@ const updateOrder = async (orderId, updates) => {
           : undefined,
       paymentMethod: updates.paymentMethod,
       paymentStatus: updates.paymentStatus,
+      currentStatus: updates.currentStatus,
+      trackingTimeline:
+        updates.trackingTimeline !== undefined
+          ? JSON.stringify(updates.trackingTimeline || [])
+          : undefined,
       paymentDetails:
         updates.paymentDetails !== undefined
           ? JSON.stringify(updates.paymentDetails || {})
@@ -190,6 +201,8 @@ const updateOrder = async (orderId, updates) => {
       deliveryLocation: { column: "delivery_location", cast: "jsonb" },
       paymentMethod: "payment_method",
       paymentStatus: "payment_status",
+      currentStatus: "current_status",
+      trackingTimeline: { column: "tracking_timeline", cast: "jsonb" },
       paymentDetails: { column: "payment_details", cast: "jsonb" },
       pricing: { column: "pricing", cast: "jsonb" },
       updatedAt: "updated_at",

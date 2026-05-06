@@ -1,10 +1,12 @@
 const {
   renderGreetingsTemplate,
+  renderOrderStatusTemplate,
   renderOffersTemplate,
   renderOtpTemplate,
   renderTemplateMessage,
   sendEmail,
   sendGreetingEmail,
+  sendOrderStatusEmail,
   sendOfferEmail,
   sendOtpEmail,
   sendTemplateEmail,
@@ -12,11 +14,13 @@ const {
 
 module.exports = {
   renderGreetingsTemplate,
+  renderOrderStatusTemplate,
   renderOffersTemplate,
   renderOtpTemplate,
   renderTemplateMessage,
   sendEmail,
   sendGreetingEmail,
+  sendOrderStatusEmail,
   sendOfferEmail,
   sendOtpEmail,
   sendTemplateEmail,

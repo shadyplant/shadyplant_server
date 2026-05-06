@@ -83,6 +83,18 @@ const findProductReviewById = async (reviewId) => {
   return mapReviewRow(result.rows[0]);
 };
 
+const findProductReviewByProductIdAndUserId = async (productId, userId) => {
+  const result = await query(
+    `SELECT *
+     FROM product_reviews
+     WHERE product_id = $1 AND user_id = $2
+     LIMIT 1`,
+    [productId, userId],
+  );
+
+  return mapReviewRow(result.rows[0]);
+};
+
 const createOrUpdateProductReview = async ({
   productId,
   userId,
@@ -205,6 +217,7 @@ module.exports = {
   createOrUpdateProductReview,
   deleteProductReview,
   findProductReviewById,
+  findProductReviewByProductIdAndUserId,
   hasUserPurchasedProduct,
   listProductReviews,
   listApprovedReviewsByProductId,

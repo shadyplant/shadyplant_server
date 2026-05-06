@@ -20,7 +20,7 @@ const {
   calculateTransportCharge,
   getDistanceKmForLocation,
 } = require("./delivery.service");
-const { serializeOrder } = require("./order.service");
+const { notifyOrderPrimaryStatus, serializeOrder } = require("./order.service");
 const {
   createRemoteRazorpayOrder,
   ensureRazorpayCheckoutConfigured,
@@ -370,6 +370,7 @@ const placeCartOrderCashOnDelivery = async (userId, payload = {}) => {
       deliveryLocation: preparedOrder.deliveryLocation,
       paymentMethod: "cash_on_delivery",
       paymentStatus: "pay_on_delivery",
+      currentStatus: "confirmed",
       paymentDetails: {
         provider: "cash_on_delivery",
         checkoutSource: preparedOrder.orderSource,
@@ -385,7 +386,9 @@ const placeCartOrderCashOnDelivery = async (userId, payload = {}) => {
   }
 
   await consumeUserCartItems(userId, preparedOrder.orderItems);
-  return serializeOrder(order);
+  const serializedOrder = serializeOrder(order);
+  await notifyOrderPrimaryStatus(serializedOrder, serializedOrder.currentStatus);
+  return serializedOrder;
 };
 
 const createCartRazorpayCheckout = async (userId, payload = {}) => {

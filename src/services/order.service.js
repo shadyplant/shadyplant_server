@@ -5,7 +5,9 @@ const {
   listOrdersByUserId,
 } = require("../repositories/order.repository");
 const { ApiError } = require("../utils/apiError");
+const { generateId } = require("../utils/crypto");
 const { isValidPhoneNumber, isValidPostalCode } = require("../utils/validators");
+const { sendOrderStatusEmail } = require("../mailer");
 
 const GRASS_PRICE_PER_SQFT = 12;
 const VEHICLES = {
@@ -62,43 +64,47 @@ const RECOMMENDED_PRODUCTS = {
     unitPrice: 950,
   },
 };
-const TRACKING_STEPS = [
-  {
-    key: "placed",
-    title: "Order placed",
-    description: "Your checkout request has been received.",
-  },
+const ORDER_STATUS_STEPS = [
   {
     key: "confirmed",
     title: "Order confirmed",
-    description: "Our team has reviewed the order and reserved stock.",
+    description: "Your order has been confirmed and moved into fulfillment.",
+    defaultEventMessage: "Order placed",
   },
   {
-    key: "preparing",
-    title: "Preparing dispatch",
-    description: "Fresh carpet grass is being cut, packed, and staged.",
-  },
-  {
-    key: "scheduled",
-    title: "Delivery scheduled",
-    description: "Transport and crew slot have been assigned.",
-  },
-  {
-    key: "dispatched",
-    title: "Dispatched",
-    description: "Your truck has left the nursery.",
+    key: "shipped",
+    title: "Shipped",
+    description: "Transport planning and dispatch updates are tracked here.",
+    defaultEventMessage: "Transport and crew slot have been assigned.",
   },
   {
     key: "out_for_delivery",
     title: "Out for delivery",
     description: "The driver is on the final route to your address.",
+    defaultEventMessage: "The driver is on the final route to your address.",
   },
   {
     key: "delivered",
     title: "Delivered",
     description: "The order has been delivered successfully.",
+    defaultEventMessage: "The order has been delivered successfully.",
   },
 ];
+
+const ORDER_STATUS_KEYS = ORDER_STATUS_STEPS.map((step) => step.key);
+const ORDER_STATUS_STEP_MAP = new Map(
+  ORDER_STATUS_STEPS.map((step) => [step.key, step]),
+);
+const ORDER_STATUS_ALIASES = {
+  placed: "confirmed",
+  confirmed: "confirmed",
+  preparing: "confirmed",
+  scheduled: "shipped",
+  dispatched: "shipped",
+  shipped: "shipped",
+  out_for_delivery: "out_for_delivery",
+  delivered: "delivered",
+};
 
 const normalizeDeliveryAddress = (deliveryAddress = {}) => ({
   line1: String(deliveryAddress.line1 || "").trim(),
@@ -109,6 +115,71 @@ const normalizeDeliveryAddress = (deliveryAddress = {}) => ({
   landmark: String(deliveryAddress.landmark || "").trim(),
   notes: String(deliveryAddress.notes || "").trim(),
 });
+
+const buildOrderItemSummary = (order = {}) => {
+  const orderItems = Array.isArray(order.orderItems) ? order.orderItems : [];
+
+  if (orderItems.length > 0) {
+    return orderItems
+      .slice(0, 3)
+      .map((item) => {
+        const quantity = Number(item.quantity || 0);
+        const name = String(item.name || item.productName || "Item").trim() || "Item";
+        return quantity > 0 ? `${name} × ${quantity}` : name;
+      })
+      .join(", ");
+  }
+
+  const quantitySqft = Number(order.quantitySqft || 0);
+  return quantitySqft > 0 ? `${quantitySqft} sqft order` : "";
+};
+
+const notifyOrderPrimaryStatus = async (order, statusOverride = "") => {
+  const to = String(order?.email || "").trim();
+  const currentStatus = normalizeOrderCurrentStatus(statusOverride || order?.currentStatus);
+
+  if (!to || !currentStatus) {
+    return null;
+  }
+
+  try {
+    const result = await sendOrderStatusEmail({
+      to,
+      customerName: String(order.fullName || "").trim() || "Customer",
+      status: currentStatus,
+      orderNumber: String(order.orderNumber || "").trim(),
+      trackingCode: String(order.trackingCode || "").trim(),
+      deliveryDate: order.deliveryDate,
+      deliveryAddress: order.deliveryAddress || {},
+      billingDetails: order.billingDetails || {},
+      paymentMethodLabel: order.paymentMethodLabel || "",
+      paymentStatusLabel: order.paymentStatusLabel || "",
+      totalAmount: Number(order?.pricing?.total || 0),
+      itemSummary: buildOrderItemSummary(order),
+    });
+
+    console.info("[Mailer] Order status email processed", {
+      orderId: order?.id,
+      orderNumber: order?.orderNumber,
+      status: currentStatus,
+      email: to,
+      delivered: Boolean(result?.delivered),
+      skipped: Boolean(result?.skipped),
+      transport: result?.transport || env.mailer.transport,
+      messageId: result?.messageId || null,
+    });
+
+    return result;
+  } catch (error) {
+    console.error("[Mailer] Failed to send order status email", {
+      orderId: order?.id,
+      status: currentStatus,
+      email: to,
+      error: error instanceof Error ? error.message : error,
+    });
+    return null;
+  }
+};
 
 const validateDeliveryAddress = (deliveryAddress) => {
   const normalizedDeliveryAddress = normalizeDeliveryAddress(deliveryAddress);
@@ -243,7 +314,7 @@ const prepareOrderForUser = async (userId, payload) => {
   };
 };
 
-const resolveOrderStatus = (order) => {
+const resolveLegacyOrderStatus = (order) => {
   const deliveryDateMs = new Date(order.deliveryDate).getTime();
   const diffMs = deliveryDateMs - Date.now();
 
@@ -255,36 +326,195 @@ const resolveOrderStatus = (order) => {
     return "out_for_delivery";
   }
 
-  if (diffMs <= 12 * 60 * 60 * 1000) {
-    return "dispatched";
-  }
-
   if (diffMs <= 36 * 60 * 60 * 1000) {
-    return "scheduled";
-  }
-
-  if (diffMs <= 72 * 60 * 60 * 1000) {
-    return "preparing";
+    return "shipped";
   }
 
   return "confirmed";
 };
 
+const normalizeOrderCurrentStatus = (value) => {
+  const normalizedValue = String(value || "").trim().toLowerCase();
+  return ORDER_STATUS_ALIASES[normalizedValue] || null;
+};
+
+const resolveOrderStatus = (order) =>
+  normalizeOrderCurrentStatus(order.currentStatus) ||
+  resolveLegacyOrderStatus(order);
+
+const normalizeTrackingEntry = (entry = {}, statusKey, index = 0) => {
+  const message = String(
+    entry.message || entry.description || entry.note || "",
+  ).trim();
+  const timestamp = String(
+    entry.timestamp || entry.createdAt || entry.occurredAt || "",
+  ).trim();
+
+  if (!message) {
+    return null;
+  }
+
+  return {
+    id:
+      String(entry.id || "").trim() ||
+      `${statusKey}-${index + 1}-${generateId()}`,
+    message,
+    timestamp: timestamp || new Date().toISOString(),
+  };
+};
+
+const normalizeStoredTrackingTimeline = (trackingTimeline = []) => {
+  const normalizedGroups = new Map();
+
+  for (const step of ORDER_STATUS_STEPS) {
+    normalizedGroups.set(step.key, {
+      key: step.key,
+      title: step.title,
+      entries: [],
+    });
+  }
+
+  if (!Array.isArray(trackingTimeline)) {
+    return ORDER_STATUS_STEPS.map((step) => normalizedGroups.get(step.key));
+  }
+
+  trackingTimeline.forEach((group) => {
+    if (!group || typeof group !== "object") {
+      return;
+    }
+
+    const statusKey = normalizeOrderCurrentStatus(group.key || group.status);
+
+    if (!statusKey) {
+      return;
+    }
+
+    const step = ORDER_STATUS_STEP_MAP.get(statusKey);
+    const currentGroup = normalizedGroups.get(statusKey);
+    const entries = Array.isArray(group.entries)
+      ? group.entries
+          .map((entry, index) => normalizeTrackingEntry(entry, statusKey, index))
+          .filter(Boolean)
+          .sort(
+            (left, right) =>
+              new Date(left.timestamp).getTime() -
+              new Date(right.timestamp).getTime(),
+          )
+      : [];
+
+    normalizedGroups.set(statusKey, {
+      key: statusKey,
+      title: step.title,
+      entries: [...(currentGroup?.entries || []), ...entries].sort(
+        (left, right) =>
+          new Date(left.timestamp).getTime() -
+          new Date(right.timestamp).getTime(),
+      ),
+    });
+  });
+
+  return ORDER_STATUS_STEPS.map((step) => normalizedGroups.get(step.key));
+};
+
+const appendTrackingEntryToStatus = (
+  trackingTimeline = [],
+  statusKey,
+  message,
+  timestamp = new Date().toISOString(),
+) => {
+  const normalizedStatusKey = normalizeOrderCurrentStatus(statusKey);
+  const nextMessage = String(message || "").trim();
+
+  if (!normalizedStatusKey || !nextMessage) {
+    return normalizeStoredTrackingTimeline(trackingTimeline);
+  }
+
+  const nextTimeline = normalizeStoredTrackingTimeline(trackingTimeline);
+  const targetGroup = nextTimeline.find((group) => group.key === normalizedStatusKey);
+
+  if (!targetGroup) {
+    return nextTimeline;
+  }
+
+  targetGroup.entries = [
+    ...targetGroup.entries,
+    {
+      id: generateId(),
+      message: nextMessage,
+      timestamp,
+    },
+  ].sort(
+    (left, right) =>
+      new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
+  );
+
+  return nextTimeline;
+};
+
+const ensureTrackingStatusEntry = (
+  trackingTimeline = [],
+  statusKey,
+  timestamp = new Date().toISOString(),
+) => {
+  const normalizedStatusKey = normalizeOrderCurrentStatus(statusKey);
+
+  if (!normalizedStatusKey) {
+    return normalizeStoredTrackingTimeline(trackingTimeline);
+  }
+
+  const nextTimeline = normalizeStoredTrackingTimeline(trackingTimeline);
+  const targetGroup = nextTimeline.find((group) => group.key === normalizedStatusKey);
+  const targetStep = ORDER_STATUS_STEP_MAP.get(normalizedStatusKey);
+
+  if (!targetGroup || !targetStep) {
+    return nextTimeline;
+  }
+
+  if (!targetGroup.entries.length) {
+    targetGroup.entries.push({
+      id: generateId(),
+      message: targetStep.defaultEventMessage,
+      timestamp,
+    });
+  }
+
+  return nextTimeline;
+};
+
+const buildInitialTrackingTimeline = (timestamp = new Date().toISOString()) =>
+  ensureTrackingStatusEntry([], "confirmed", timestamp);
+
 const buildTrackingTimeline = (order) => {
   const currentStatus = resolveOrderStatus(order);
-  const currentIndex = TRACKING_STEPS.findIndex((step) => step.key === currentStatus);
+  const normalizedTimeline = normalizeStoredTrackingTimeline(order.trackingTimeline);
+  const currentIndex = ORDER_STATUS_STEPS.findIndex(
+    (step) => step.key === currentStatus,
+  );
 
-  return TRACKING_STEPS.map((step, index) => ({
-    key: step.key,
-    title: step.title,
-    description: step.description,
-    state:
-      index < currentIndex
-        ? "complete"
-        : index === currentIndex
-          ? "current"
-          : "upcoming",
-  }));
+  return ORDER_STATUS_STEPS.map((step, index) => {
+    const storedGroup =
+      normalizedTimeline.find((group) => group.key === step.key) || {
+        key: step.key,
+        title: step.title,
+        entries: [],
+      };
+    const latestEntry =
+      storedGroup.entries[storedGroup.entries.length - 1] || null;
+
+    return {
+      key: step.key,
+      title: step.title,
+      description: step.description,
+      state:
+        index < currentIndex
+          ? "complete"
+          : index === currentIndex
+            ? "current"
+            : "upcoming",
+      occurredAt: latestEntry?.timestamp || null,
+      entries: storedGroup.entries,
+    };
+  });
 };
 
 const serializeOrder = (order) => {
@@ -326,10 +556,14 @@ const createPreparedOrder = async (preparedOrder, overrides = {}) => {
   const order = await createOrder({
     ...preparedOrder,
     paymentStatus: "pay_on_delivery",
+    currentStatus: "confirmed",
+    trackingTimeline: buildInitialTrackingTimeline(),
     ...overrides,
   });
 
-  return serializeOrder(order);
+  const serializedOrder = serializeOrder(order);
+  await notifyOrderPrimaryStatus(serializedOrder, serializedOrder.currentStatus);
+  return serializedOrder;
 };
 
 const createUserOrder = async (userId, payload) => {
@@ -363,10 +597,17 @@ const getUserOrder = async (userId, orderId) => {
 };
 
 module.exports = {
+  ORDER_STATUS_KEYS,
+  appendTrackingEntryToStatus,
+  buildInitialTrackingTimeline,
   createPreparedOrder,
+  ensureTrackingStatusEntry,
+  normalizeOrderCurrentStatus,
+  normalizeStoredTrackingTimeline,
   prepareOrderForUser,
   createUserOrder,
   getUserOrder,
   listUserOrders,
   serializeOrder,
+  notifyOrderPrimaryStatus,
 };
