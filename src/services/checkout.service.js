@@ -22,9 +22,10 @@ const {
 } = require("./delivery.service");
 const { notifyOrderPrimaryStatus, serializeOrder } = require("./order.service");
 const {
-  createRemoteRazorpayOrder,
-  ensureRazorpayCheckoutConfigured,
-} = require("./razorpay.service");
+  buildCashfreeReturnUrl,
+  createRemoteCashfreeOrder,
+  ensureCashfreeCheckoutConfigured,
+} = require("./cashfree.service");
 
 const PAYMENT_STATUS_LABELS = {
   created: "Draft created",
@@ -317,7 +318,7 @@ const buildPreparedCartOrder = async (userId, payload = {}, paymentMethod) => {
     ...preview,
     fullName: billingDetails.name,
     phoneNumber: billingDetails.contact,
-    email: preview.user.email,
+    email: billingDetails.email || preview.user.email,
     billingDetails,
     deliveryDate: parsedDeliveryDate.toISOString(),
     paymentMethod,
@@ -391,8 +392,8 @@ const placeCartOrderCashOnDelivery = async (userId, payload = {}) => {
   return serializedOrder;
 };
 
-const createCartRazorpayCheckout = async (userId, payload = {}) => {
-  ensureRazorpayCheckoutConfigured();
+const createCartCashfreeCheckout = async (userId, payload = {}) => {
+  ensureCashfreeCheckoutConfigured();
 
   const preparedOrder = await buildPreparedCartOrder(
     userId,
@@ -428,30 +429,49 @@ const createCartRazorpayCheckout = async (userId, payload = {}) => {
       },
     },
     orderId: null,
-    razorpay: {},
+    gateway: {
+      provider: "cashfree",
+    },
   });
 
   try {
-    const razorpayOrder = await createRemoteRazorpayOrder({
-      amount: preparedOrder.pricing.total * 100,
-      currency: preparedOrder.pricing.currency,
-      receipt: `GGN-CART-${paymentAttempt.id.slice(0, 10)}`,
-      notes: {
-        paymentAttemptId: paymentAttempt.id,
-        userId,
+    const returnUrl = buildCashfreeReturnUrl(
+      payload.returnPath,
+      paymentAttempt.id,
+      "/order-summary",
+    );
+    const cashfreeOrder = await createRemoteCashfreeOrder({
+      order_id: paymentAttempt.id,
+      order_amount: Number(preparedOrder.pricing.total.toFixed(2)),
+      order_currency: preparedOrder.pricing.currency,
+      customer_details: {
+        customer_id: userId,
+        customer_name: preparedOrder.fullName,
+        customer_email: preparedOrder.email || undefined,
+        customer_phone: preparedOrder.phoneNumber,
+      },
+      order_meta: {
+        return_url: returnUrl,
+        ...(env.cashfree.notifyUrl ? { notify_url: env.cashfree.notifyUrl } : {}),
+      },
+      order_note: `Cart checkout for ${preparedOrder.summary.itemCount} cart item(s)`,
+      order_tags: {
         source: preparedOrder.orderSource,
+        payment_attempt_id: paymentAttempt.id,
+        user_id: userId,
       },
     });
 
     await updatePaymentAttempt(paymentAttempt.id, {
       status: "checkout_ready",
-      razorpay: {
-        orderId: razorpayOrder.id,
-        amount: razorpayOrder.amount,
-        currency: razorpayOrder.currency,
-        receipt: razorpayOrder.receipt,
-        status: razorpayOrder.status,
-        notes: razorpayOrder.notes || {},
+      gateway: {
+        provider: "cashfree",
+        orderId: cashfreeOrder.order_id,
+        cfOrderId: cashfreeOrder.cf_order_id,
+        amount: cashfreeOrder.order_amount,
+        currency: cashfreeOrder.order_currency,
+        paymentSessionId: cashfreeOrder.payment_session_id,
+        status: cashfreeOrder.order_status,
       },
     });
 
@@ -459,10 +479,11 @@ const createCartRazorpayCheckout = async (userId, payload = {}) => {
       paymentAttemptId: paymentAttempt.id,
       status: "checkout_ready",
       statusLabel: PAYMENT_STATUS_LABELS.checkout_ready,
-      keyId: env.razorpay.keyId,
-      orderId: razorpayOrder.id,
-      amount: razorpayOrder.amount,
-      currency: razorpayOrder.currency,
+      paymentSessionId: cashfreeOrder.payment_session_id,
+      orderId: cashfreeOrder.order_id,
+      cfOrderId: cashfreeOrder.cf_order_id,
+      amount: cashfreeOrder.order_amount,
+      currency: cashfreeOrder.order_currency,
       businessName: "Grass Green Nursery",
       description: `Checkout for ${preparedOrder.summary.itemCount} cart item(s)`,
       prefill: {
@@ -470,7 +491,9 @@ const createCartRazorpayCheckout = async (userId, payload = {}) => {
         email: preparedOrder.email,
         contact: preparedOrder.phoneNumber,
       },
-      shouldSimulateWebhook: !env.razorpay.isWebhookConfigured,
+      mode: env.cashfree.environment,
+      returnUrl,
+      shouldSimulateWebhook: !env.cashfree.isWebhookConfigured,
     };
   } catch (error) {
     await updatePaymentAttempt(paymentAttempt.id, {
@@ -483,7 +506,7 @@ const createCartRazorpayCheckout = async (userId, payload = {}) => {
 };
 
 module.exports = {
-  createCartRazorpayCheckout,
+  createCartCashfreeCheckout,
   placeCartOrderCashOnDelivery,
   previewCartCheckout,
 };

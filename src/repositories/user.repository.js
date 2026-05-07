@@ -162,7 +162,7 @@ const updateUser = async (id, updates) => {
   const nextUser = {
     ...currentUser,
     ...updates,
-    deliveryAddress: updates.deliveryAddress
+    deliveryAddress: updates.deliveryAddress !== undefined
       ? {
           ...EMPTY_DELIVERY_ADDRESS,
           ...(currentUser.deliveryAddress || {}),
@@ -172,7 +172,7 @@ const updateUser = async (id, updates) => {
           ...EMPTY_DELIVERY_ADDRESS,
           ...(currentUser.deliveryAddress || {}),
         },
-    billingDetails: updates.billingDetails
+    billingDetails: updates.billingDetails !== undefined
       ? {
           ...EMPTY_BILLING_DETAILS,
           ...(currentUser.billingDetails || {}),

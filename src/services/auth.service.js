@@ -264,8 +264,13 @@ const validateProfileUpdatePayload = ({
     throw new ApiError(400, "Phone number format is invalid.");
   }
 
-  const normalizedDeliveryAddress = normalizeDeliveryAddress(deliveryAddress);
-  const hasDeliveryAddress = Object.values(normalizedDeliveryAddress).some(Boolean);
+  const hasDeliveryAddressField = deliveryAddress !== undefined;
+  const normalizedDeliveryAddress = hasDeliveryAddressField
+    ? normalizeDeliveryAddress(deliveryAddress)
+    : null;
+  const hasDeliveryAddress =
+    normalizedDeliveryAddress &&
+    Object.values(normalizedDeliveryAddress).some(Boolean);
 
   if (hasDeliveryAddress) {
     const hasFormattedOnlyAddress =
@@ -296,8 +301,13 @@ const validateProfileUpdatePayload = ({
     }
   }
 
-  const normalizedBillingDetails = normalizeBillingDetails(billingDetails);
-  const hasBillingDetails = Object.values(normalizedBillingDetails).some(Boolean);
+  const hasBillingDetailsField = billingDetails !== undefined;
+  const normalizedBillingDetails = hasBillingDetailsField
+    ? normalizeBillingDetails(billingDetails)
+    : null;
+  const hasBillingDetails =
+    normalizedBillingDetails &&
+    Object.values(normalizedBillingDetails).some(Boolean);
 
   if (hasBillingDetails) {
     if (!normalizedBillingDetails.name) {
@@ -331,12 +341,20 @@ const validateProfileUpdatePayload = ({
     }
   }
 
-  return {
+  const nextProfile = {
     fullName: fullName.trim(),
     phoneNumber: normalizedPhoneNumber,
-    deliveryAddress: normalizedDeliveryAddress,
-    billingDetails: normalizedBillingDetails,
   };
+
+  if (hasDeliveryAddressField) {
+    nextProfile.deliveryAddress = normalizedDeliveryAddress;
+  }
+
+  if (hasBillingDetailsField) {
+    nextProfile.billingDetails = normalizedBillingDetails;
+  }
+
+  return nextProfile;
 };
 
 const getGoogleIdTokenFromPayload = (payload = {}) =>

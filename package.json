@@ -9,6 +9,7 @@
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "mailer:test": "node src/scripts/test-mailer.js",
+    "mailer:test-order": "node src/scripts/test-order-email.js",
     "products:backfill": "node src/scripts/backfill-product-catalog.js"
   },
   "dependencies": {

@@ -1,3 +1,4 @@
+const { env } = require("../config/env");
 const { findUserById } = require("../repositories/user.repository");
 const {
   createOrder,
@@ -139,6 +140,12 @@ const notifyOrderPrimaryStatus = async (order, statusOverride = "") => {
   const currentStatus = normalizeOrderCurrentStatus(statusOverride || order?.currentStatus);
 
   if (!to || !currentStatus) {
+    console.warn("[Mailer] Skipping order status email", {
+      orderId: order?.id,
+      orderNumber: order?.orderNumber,
+      hasEmail: Boolean(to),
+      status: currentStatus || null,
+    });
     return null;
   }
 
@@ -265,6 +272,7 @@ const validateCreateOrderPayload = (payload) => {
 
   return {
     fullName: payload.fullName.trim(),
+    email: String(payload.email || "").trim(),
     phoneNumber: payload.phoneNumber.trim(),
     quantitySqft: Math.round(quantitySqft),
     distanceKm: Number(distanceKm.toFixed(1)),
@@ -295,7 +303,7 @@ const prepareOrderForUser = async (userId, payload) => {
   return {
     userId,
     fullName: nextOrder.fullName,
-    email: user.email,
+    email: nextOrder.email || user.email,
     phoneNumber: nextOrder.phoneNumber,
     deliveryAddress: nextOrder.deliveryAddress,
     deliveryDate: nextOrder.deliveryDate,
@@ -570,10 +578,10 @@ const createUserOrder = async (userId, payload) => {
   const preparedOrder = await prepareOrderForUser(userId, payload);
 
   if (preparedOrder.paymentMethod !== "cash_on_delivery") {
-    throw new ApiError(
-      400,
-      "Online payment orders must be completed through Razorpay checkout first.",
-    );
+      throw new ApiError(
+        400,
+        "Online payment orders must be completed through Cashfree checkout first.",
+      );
   }
 
   return createPreparedOrder(preparedOrder, {

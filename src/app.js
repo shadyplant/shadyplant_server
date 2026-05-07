@@ -37,14 +37,7 @@ app.disable("x-powered-by");
 app.use(
   cors({
     origin(origin, callback) {
-      if (env.isDevelopment) {
-        return callback(null, true);
-      }
-
-      if (!origin || env.clientOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-      return callback(new Error("CORS origin is not allowed."));
+      return callback(null, true);
     },
     credentials: true,
   }),

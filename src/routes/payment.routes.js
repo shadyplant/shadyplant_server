@@ -4,18 +4,24 @@ const {
   getPaymentAttempt,
   handleWebhook,
   simulateWebhook,
+  verifyPaymentAttempt,
 } = require("../controllers/payment.controller");
 const { requireAuth } = require("../middleware/auth.middleware");
 
 const router = express.Router();
 
-router.post("/razorpay/webhook", handleWebhook);
-router.post("/razorpay/create-order", requireAuth, createCheckout);
+router.post("/cashfree/webhook", handleWebhook);
+router.post("/cashfree/create-order", requireAuth, createCheckout);
 router.post(
-  "/razorpay/test-webhook/:paymentAttemptId",
+  "/cashfree/test-webhook/:paymentAttemptId",
   requireAuth,
   simulateWebhook,
 );
-router.get("/razorpay/attempts/:paymentAttemptId", requireAuth, getPaymentAttempt);
+router.get("/cashfree/attempts/:paymentAttemptId", requireAuth, getPaymentAttempt);
+router.post(
+  "/cashfree/attempts/:paymentAttemptId/verify",
+  requireAuth,
+  verifyPaymentAttempt,
+);
 
 module.exports = router;

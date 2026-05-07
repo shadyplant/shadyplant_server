@@ -1,16 +1,17 @@
 const {
-  createRazorpayCheckout,
+  createCashfreeCheckout,
   getPaymentAttemptStatus,
-  processRazorpayWebhook,
+  processCashfreeWebhook,
+  verifyCashfreePaymentAttempt,
   simulateSuccessfulWebhook,
 } = require("../services/payment.service");
 const { asyncHandler } = require("../utils/asyncHandler");
 
 const createCheckout = asyncHandler(async (req, res) => {
-  const checkout = await createRazorpayCheckout(req.auth.userId, req.body);
+  const checkout = await createCashfreeCheckout(req.auth.userId, req.body);
 
   res.status(201).json({
-    message: "Razorpay checkout created successfully.",
+    message: "Cashfree checkout created successfully.",
     data: { checkout },
   });
 });
@@ -28,8 +29,9 @@ const getPaymentAttempt = asyncHandler(async (req, res) => {
 });
 
 const handleWebhook = asyncHandler(async (req, res) => {
-  const result = await processRazorpayWebhook({
-    signature: req.headers["x-razorpay-signature"],
+  const result = await processCashfreeWebhook({
+    signature: req.headers["x-webhook-signature"],
+    timestamp: req.headers["x-webhook-timestamp"],
     rawBody: req.rawBody,
     event: req.body,
   });
@@ -37,6 +39,18 @@ const handleWebhook = asyncHandler(async (req, res) => {
   res.status(200).json({
     message: result.ignored ? "Webhook ignored." : "Webhook processed successfully.",
     data: result,
+  });
+});
+
+const verifyPaymentAttempt = asyncHandler(async (req, res) => {
+  const paymentAttempt = await verifyCashfreePaymentAttempt(
+    req.auth.userId,
+    req.params.paymentAttemptId,
+  );
+
+  res.status(200).json({
+    message: "Payment attempt verified successfully.",
+    data: { paymentAttempt },
   });
 });
 
@@ -57,4 +71,5 @@ module.exports = {
   getPaymentAttempt,
   handleWebhook,
   simulateWebhook,
+  verifyPaymentAttempt,
 };

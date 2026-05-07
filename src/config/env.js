@@ -161,10 +161,22 @@ const env = {
     user: String(process.env.MAILER_USER || "").trim(),
     pass: String(process.env.MAILER_PASS || "").trim(),
   },
-  razorpay: {
-    keyId: process.env.RAZORPAY_KEY_ID || "",
-    keySecret: process.env.RAZORPAY_KEY_SECRET || "",
-    webhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET || "",
+  cashfree: {
+    environment: String(
+      process.env.CASHFREE_ENVIRONMENT ||
+        (process.env.NODE_ENV === "production" ? "production" : "sandbox"),
+    )
+      .trim()
+      .toLowerCase(),
+    appId: String(process.env.CASHFREE_APP_ID || "").trim(),
+    secretKey: String(process.env.CASHFREE_SECRET_KEY || "").trim(),
+    webhookSecret: String(process.env.CASHFREE_WEBHOOK_SECRET || "").trim(),
+    apiVersion: String(process.env.CASHFREE_API_VERSION || "2025-01-01").trim(),
+    notifyUrl: String(process.env.CASHFREE_NOTIFY_URL || "").trim(),
+    webhookToleranceSeconds: parseInteger(
+      process.env.CASHFREE_WEBHOOK_TOLERANCE_SECONDS,
+      300,
+    ),
   },
   postgres: {
     url:
@@ -195,14 +207,16 @@ env.isFirebaseConfigured = Boolean(
       env.firebase.clientEmail &&
       env.firebase.privateKey),
 );
-env.razorpay.isCheckoutConfigured = Boolean(
-  env.razorpay.keyId && env.razorpay.keySecret,
+env.cashfree.environment =
+  env.cashfree.environment === "production" ? "production" : "sandbox";
+env.cashfree.isCheckoutConfigured = Boolean(
+  env.cashfree.appId && env.cashfree.secretKey,
 );
-env.razorpay.isWebhookConfigured = hasConfiguredValue(
-  env.razorpay.webhookSecret,
+env.cashfree.isWebhookConfigured = hasConfiguredValue(
+  env.cashfree.webhookSecret,
 );
-env.razorpay.isConfigured = Boolean(
-  env.razorpay.isCheckoutConfigured && env.razorpay.isWebhookConfigured,
+env.cashfree.isConfigured = Boolean(
+  env.cashfree.isCheckoutConfigured && env.cashfree.isWebhookConfigured,
 );
 env.mailer.isEnabled = env.mailer.transport !== "disabled";
 env.mailer.hasSmtpCredentials = Boolean(env.mailer.user && env.mailer.pass);

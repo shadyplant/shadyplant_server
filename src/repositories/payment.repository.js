@@ -19,7 +19,7 @@ const mapPaymentAttemptRow = (row) => {
     failureReason: row.failure_reason,
     processedAt: row.processed_at,
     lastWebhookEvent: row.last_webhook_event,
-    razorpay: row.razorpay || {},
+    gateway: row.razorpay || {},
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -64,7 +64,7 @@ const createPaymentAttempt = async (paymentAttemptData) => {
       paymentAttempt.failureReason || null,
       paymentAttempt.processedAt || null,
       paymentAttempt.lastWebhookEvent || null,
-      JSON.stringify(paymentAttempt.razorpay || {}),
+      JSON.stringify(paymentAttempt.gateway || {}),
       paymentAttempt.createdAt,
       paymentAttempt.updatedAt,
     ],
@@ -84,10 +84,10 @@ const findPaymentAttemptById = async (paymentAttemptId) => {
   return mapPaymentAttemptRow(result.rows[0]);
 };
 
-const findPaymentAttemptByRazorpayOrderId = async (razorpayOrderId) => {
+const findPaymentAttemptByGatewayOrderId = async (gatewayOrderId) => {
   const result = await query(
     "SELECT * FROM payment_attempts WHERE razorpay->>'orderId' = $1 LIMIT 1",
-    [razorpayOrderId],
+    [gatewayOrderId],
   );
   return mapPaymentAttemptRow(result.rows[0]);
 };
@@ -109,9 +109,9 @@ const updatePaymentAttempt = async (paymentAttemptId, updates) => {
         updates.checkoutPayload !== undefined
           ? JSON.stringify(updates.checkoutPayload || {})
           : undefined,
-      razorpay:
-        updates.razorpay !== undefined
-          ? JSON.stringify(updates.razorpay || {})
+      gateway:
+        updates.gateway !== undefined
+          ? JSON.stringify(updates.gateway || {})
           : undefined,
       updatedAt: new Date(),
     },
@@ -123,7 +123,7 @@ const updatePaymentAttempt = async (paymentAttemptId, updates) => {
       failureReason: "failure_reason",
       processedAt: "processed_at",
       lastWebhookEvent: "last_webhook_event",
-      razorpay: { column: "razorpay", cast: "jsonb" },
+      gateway: { column: "razorpay", cast: "jsonb" },
       updatedAt: "updated_at",
     },
   );
@@ -141,7 +141,7 @@ const updatePaymentAttempt = async (paymentAttemptId, updates) => {
 module.exports = {
   createPaymentAttempt,
   findPaymentAttemptById,
-  findPaymentAttemptByRazorpayOrderId,
+  findPaymentAttemptByGatewayOrderId,
   listAllPaymentAttempts,
   updatePaymentAttempt,
 };

@@ -60,6 +60,30 @@ const getAvailableStock = (product) =>
 const getResolvedVariantStock = (variant) =>
   Math.max(0, Math.floor(Number(variant?.stock || 0)));
 
+const getConfiguredMinOrderQuantity = (product) =>
+  Math.max(1, Math.floor(Number(product?.minOrderQuantity || 1)));
+
+const getEffectiveMinOrderQuantity = (product, variant) => {
+  const configuredMinimum = getConfiguredMinOrderQuantity(product);
+  const availableStock = getAvailableStock(product);
+  const variantStock = getResolvedVariantStock(variant);
+  const maxPurchasableQuantity =
+    variant && variant.variantId
+      ? Math.min(availableStock, variantStock)
+      : availableStock;
+
+  if (maxPurchasableQuantity > 0) {
+    return Math.max(1, Math.min(configuredMinimum, maxPurchasableQuantity));
+  }
+
+  return configuredMinimum;
+};
+
+const buildMinOrderQuantityErrorMessage = (product, minimumQuantity) => {
+  const productName = String(product?.name || "This product").trim();
+  return `Minimum order quantity for ${productName} is ${minimumQuantity} unit(s).`;
+};
+
 const buildStockErrorMessage = (product, requestedQuantity) => {
   const productName = String(product?.name || "This product").trim();
   const availableStock = getAvailableStock(product);
@@ -112,6 +136,7 @@ const assertProductStockForQuantity = async ({
   variantId = "",
   optionSelections = [],
   quantity,
+  skipMinimumQuantityCheck = false,
 }) => {
   const product = await findProductById(productId);
 
@@ -123,6 +148,17 @@ const assertProductStockForQuantity = async ({
     variantId,
     optionSelections,
   });
+  const minimumOrderQuantity = getEffectiveMinOrderQuantity(
+    product,
+    resolvedVariant,
+  );
+
+  if (!skipMinimumQuantityCheck && quantity < minimumOrderQuantity) {
+    throw new ApiError(
+      400,
+      buildMinOrderQuantityErrorMessage(product, minimumOrderQuantity),
+    );
+  }
 
   if (quantity > getAvailableStock(product)) {
     throw new ApiError(409, buildStockErrorMessage(product, quantity));
@@ -169,6 +205,17 @@ const assertCartItemsWithinStock = async (items = []) => {
       variantId: item.variantId,
       optionSelections: item.optionSelections,
     });
+    const minimumOrderQuantity = getEffectiveMinOrderQuantity(
+      product,
+      resolvedVariant,
+    );
+
+    if (item.quantity < minimumOrderQuantity) {
+      throw new ApiError(
+        400,
+        buildMinOrderQuantityErrorMessage(product, minimumOrderQuantity),
+      );
+    }
 
     if (item.quantity > getAvailableStock(product)) {
       throw new ApiError(409, buildStockErrorMessage(product, item.quantity));
@@ -284,6 +331,7 @@ const addCartItem = async (userId, payload) => {
   const { product, resolvedVariant } = await assertProductStockForQuantity({
     ...identity,
     quantity: quantityToAdd,
+    skipMinimumQuantityCheck: true,
   });
   const variantId = resolvedVariant.variantId;
   const cartLineId = buildCartLineId(identity.productId, variantId);

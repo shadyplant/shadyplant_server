@@ -239,14 +239,17 @@ const buildOrderTransaction = (order, paymentAttempt = null) => {
     currentStatus: order.currentStatus || null,
     provider:
       normalizeString(paymentDetails.provider) ||
-      (paymentAttempt?.razorpay?.orderId ? "razorpay" : null),
+      normalizeString(paymentAttempt?.gateway?.provider) ||
+      null,
     gatewayOrderId:
+      normalizeString(paymentDetails.cashfreeOrderId) ||
       normalizeString(paymentDetails.razorpayOrderId) ||
-      normalizeString(paymentAttempt?.razorpay?.orderId) ||
+      normalizeString(paymentAttempt?.gateway?.orderId) ||
       null,
     gatewayPaymentId:
+      normalizeString(paymentDetails.cashfreePaymentId) ||
       normalizeString(paymentDetails.razorpayPaymentId) ||
-      normalizeString(paymentAttempt?.razorpay?.paymentId) ||
+      normalizeString(paymentAttempt?.gateway?.paymentId) ||
       null,
     failureReason: paymentAttempt?.failureReason || null,
     lastWebhookEvent:
@@ -306,9 +309,9 @@ const buildStandalonePaymentAttemptTransaction = (paymentAttempt) => {
       PAYMENT_ATTEMPT_STATUS_LABELS[paymentAttempt.status] ||
       "Payment update pending",
     currentStatus: null,
-    provider: paymentAttempt.razorpay?.orderId ? "razorpay" : null,
-    gatewayOrderId: normalizeString(paymentAttempt.razorpay?.orderId) || null,
-    gatewayPaymentId: normalizeString(paymentAttempt.razorpay?.paymentId) || null,
+    provider: normalizeString(paymentAttempt.gateway?.provider) || null,
+    gatewayOrderId: normalizeString(paymentAttempt.gateway?.orderId) || null,
+    gatewayPaymentId: normalizeString(paymentAttempt.gateway?.paymentId) || null,
     failureReason: paymentAttempt.failureReason || null,
     lastWebhookEvent: paymentAttempt.lastWebhookEvent || null,
     isMoneyReceived,
