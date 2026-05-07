@@ -193,7 +193,13 @@ const getCartLineItems = async (userId) => {
     }
 
     const unitPrice = Number(resolvedVariant.price || product.price || 0);
+    const unitMrp = Number(
+      resolvedVariant.mrp || product.mrp || resolvedVariant.price || product.price || 0,
+    );
     const unitWeightKg = Number(resolvedVariant.weight || product.weight || 0);
+    const unitDiscount = Math.max(0, unitMrp - unitPrice);
+    const discountPercent =
+      unitMrp > 0 ? Number(((unitDiscount / unitMrp) * 100).toFixed(2)) : 0;
 
     return {
       productId: product.id,
@@ -207,6 +213,9 @@ const getCartLineItems = async (userId) => {
       unit: product.unit,
       quantity,
       unitPrice,
+      unitMrp,
+      unitDiscount,
+      discountPercent,
       unitWeightKg,
       availableStock,
       totalWeightKg: Number((unitWeightKg * quantity).toFixed(2)),

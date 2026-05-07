@@ -238,6 +238,9 @@ const normalizeCartItemSnapshot = (payload = {}, existingItem = null) => {
   const unitPrice = parseOptionalPrice(
     payload.unitPrice ?? payload.unit_price ?? payload.price,
   );
+  const unitMrp = parseOptionalPrice(
+    payload.unitMrp ?? payload.unit_mrp ?? payload.mrp,
+  );
   const optionSelections = normalizeProductOptionSelections(
     payload.optionSelections ||
       existingItem?.optionSelections ||
@@ -262,6 +265,7 @@ const normalizeCartItemSnapshot = (payload = {}, existingItem = null) => {
     ),
     category: toTrimmedString(payload.category || existingItem?.category),
     unitPrice: unitPrice ?? existingItem?.unitPrice ?? null,
+    unitMrp: unitMrp ?? existingItem?.unitMrp ?? null,
     currency: toTrimmedString(payload.currency || existingItem?.currency || "INR"),
     metadata: {
       ...(existingItem?.metadata || {}),
@@ -357,6 +361,7 @@ const addCartItem = async (userId, payload) => {
     variantLabel: resolvedVariant.displayLabel,
     packLabel: resolvedVariant.packLabel,
     price: resolvedVariant.price,
+    mrp: resolvedVariant.mrp,
     name: product.name,
     image: product.image,
     category: product.category,
@@ -416,6 +421,7 @@ const replaceCartItem = async (userId, itemId, payload) => {
         variantLabel: resolvedVariant.displayLabel,
         packLabel: resolvedVariant.packLabel,
         price: resolvedVariant.price,
+        mrp: resolvedVariant.mrp,
         name: product.name,
         image: product.image,
         category: product.category,

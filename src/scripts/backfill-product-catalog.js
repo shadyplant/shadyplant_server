@@ -4,6 +4,7 @@ const { initializeMongo, closeMongo } = require("../config/mongo");
 const {
   applyProductGalleryImport,
   syncProductIdentifiers,
+  syncProductMrpValues,
 } = require("../repositories/product.repository");
 
 const getGalleryFileFromArgs = () => {
@@ -39,6 +40,9 @@ const run = async () => {
 
   const identifierCount = await syncProductIdentifiers();
   console.log(`Assigned product identifiers for ${identifierCount} product(s).`);
+
+  const mrpCount = await syncProductMrpValues();
+  console.log(`Normalized MRP values for ${mrpCount} product(s).`);
 
   const galleryFile = getGalleryFileFromArgs();
   if (galleryFile) {

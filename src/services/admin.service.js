@@ -402,11 +402,17 @@ const normalizeProductPayload = (payload = {}, { partial = false } = {}) => {
 
   const price =
     payload.price !== undefined ? Number(payload.price) : undefined;
+  const mrp =
+    payload.mrp !== undefined ? Number(payload.mrp) : undefined;
   const weight =
     payload.weight !== undefined ? Number(payload.weight) : undefined;
 
   if (price !== undefined && (!Number.isFinite(price) || price < 0)) {
     throw new ApiError(400, "Product price must be zero or greater.");
+  }
+
+  if (mrp !== undefined && (!Number.isFinite(mrp) || mrp < 0)) {
+    throw new ApiError(400, "Product MRP must be zero or greater.");
   }
 
   if (weight !== undefined && (!Number.isFinite(weight) || weight <= 0)) {
@@ -418,6 +424,7 @@ const normalizeProductPayload = (payload = {}, { partial = false } = {}) => {
     name,
     category,
     price,
+    mrp,
     weight,
     offer:
       payload.offer !== undefined ? String(payload.offer || "").trim() : undefined,

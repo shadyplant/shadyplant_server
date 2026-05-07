@@ -47,6 +47,21 @@ const normalizeOptionalNumber = (value) => {
   return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : null;
 };
 
+const resolveMrpValue = (mrp, price) => {
+  const normalizedPrice = normalizeOptionalNumber(price);
+  const normalizedMrp = normalizeOptionalNumber(mrp);
+
+  if (normalizedPrice === null) {
+    return normalizedMrp;
+  }
+
+  if (normalizedMrp === null) {
+    return normalizedPrice;
+  }
+
+  return Math.max(normalizedMrp, normalizedPrice);
+};
+
 const normalizeOptionalInteger = (value) => {
   const parsedValue = Math.floor(Number(value));
   return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : null;
@@ -111,6 +126,7 @@ const normalizeProductOption = (option = {}, index = 0) => {
   const normalizedValue = normalizeOptionalNumber(option.value);
   const normalizedUnit = normalizeDisplayUnit(option.unit);
   const normalizedPrice = normalizeOptionalNumber(option.price);
+  const normalizedMrp = resolveMrpValue(option.mrp, normalizedPrice);
   const normalizedStock = normalizeOptionalInteger(option.stock);
   const normalizedWeight = normalizeOptionalNumber(option.weight);
   const normalizedPackLabel = String(option.packLabel || "").trim();
@@ -130,6 +146,7 @@ const normalizeProductOption = (option = {}, index = 0) => {
     value: normalizedValue,
     note: String(option.note || "").trim(),
     price: normalizedPrice,
+    mrp: normalizedMrp,
     stock: normalizedStock,
     packLabel: normalizedPackLabel,
     weight: normalizedWeight,
@@ -262,12 +279,16 @@ const resolveProductVariant = (product = {}, payload = {}) => {
   const optionGroups = normalizeProductOptionGroups(product);
 
   if (!optionGroups.length) {
+    const basePrice = Number(product.price || 0);
+    const baseMrp = resolveMrpValue(product.mrp, basePrice) ?? basePrice;
+
     return {
       variantId: "",
       optionSelections: [],
       selectedOptions: [],
       displayLabel: "",
-      price: Number(product.price || 0),
+      price: basePrice,
+      mrp: baseMrp,
       stock: normalizeNonNegativeInteger(product.stock, 0),
       packLabel: String(product.packLabel || "").trim(),
       weight: Number(product.weight || 0),
@@ -308,6 +329,7 @@ const resolveProductVariant = (product = {}, payload = {}) => {
             value: selectedOption.value,
             note: selectedOption.note,
             price: selectedOption.price,
+            mrp: selectedOption.mrp,
             stock: selectedOption.stock,
             packLabel: selectedOption.packLabel,
             weight: selectedOption.weight,
@@ -325,6 +347,9 @@ const resolveProductVariant = (product = {}, payload = {}) => {
   const finalPriceCandidate = [...selectedOptions]
     .reverse()
     .find((option) => option.price !== null)?.price;
+  const finalMrpCandidate = [...selectedOptions]
+    .reverse()
+    .find((option) => option.mrp !== null)?.mrp;
   const finalStockCandidate = [...selectedOptions]
     .reverse()
     .find((option) => option.stock !== null)?.stock;
@@ -344,6 +369,13 @@ const resolveProductVariant = (product = {}, payload = {}) => {
       finalPriceCandidate !== undefined && finalPriceCandidate !== null
         ? Number(finalPriceCandidate)
         : Number(product.price || 0),
+    mrp:
+      resolveMrpValue(
+        finalMrpCandidate !== undefined ? finalMrpCandidate : product.mrp,
+        finalPriceCandidate !== undefined && finalPriceCandidate !== null
+          ? finalPriceCandidate
+          : product.price,
+      ) ?? Number(product.price || 0),
     stock:
       finalStockCandidate !== undefined && finalStockCandidate !== null
         ? normalizeNonNegativeInteger(finalStockCandidate, 0)
@@ -367,6 +399,7 @@ const prepareProductForStorage = (product = {}) => {
     ...product,
     id,
     productId: buildProductIdentifier({ ...product, id }),
+    mrp: resolveMrpValue(product.mrp, product.price),
     stock: normalizeNonNegativeInteger(product.stock, 0),
     images: normalizeProductImages(product),
     videoClips: normalizeProductVideoClips({ ...product, id }),
@@ -441,6 +474,7 @@ const serializeProduct = (product) => {
     name: product.name,
     category: product.category,
     price: product.price,
+    mrp: resolveMrpValue(product.mrp, product.price) ?? Number(product.price || 0),
     weight: Number(product.weight) > 0 ? Number(product.weight) : 0,
     offer: String(product.offer || "").trim(),
     minOrderQuantity: Number(product.minOrderQuantity) > 0
@@ -564,6 +598,10 @@ const updateProduct = async (productLookupId, updates = {}) => {
       : existingProduct.category;
   existingProduct.price =
     updates.price !== undefined ? Number(updates.price) : existingProduct.price;
+  existingProduct.mrp =
+    updates.mrp !== undefined
+      ? resolveMrpValue(updates.mrp, updates.price ?? existingProduct.price)
+      : resolveMrpValue(existingProduct.mrp, updates.price ?? existingProduct.price);
   existingProduct.weight =
     updates.weight !== undefined ? Number(updates.weight) : existingProduct.weight;
   existingProduct.offer =
@@ -961,6 +999,48 @@ const syncProductStockValues = async (seedProducts = []) => {
 
 const syncProductOptionGroups = async () => 0;
 
+const syncProductMrpValues = async () => {
+  const products = await Product.find({});
+  let updatedCount = 0;
+
+  for (const product of products) {
+    const nextMrp = resolveMrpValue(product.mrp, product.price);
+    let hasChanges =
+      Number(product.mrp ?? -1) !== Number(nextMrp ?? -1);
+
+    product.mrp = nextMrp;
+
+    if (Array.isArray(product.optionGroups) && product.optionGroups.length) {
+      product.optionGroups = normalizeProductOptionGroups({
+        optionGroups: product.optionGroups,
+      }).map((group) => ({
+        ...group,
+        options: group.options.map((option) => {
+          const nextOptionMrp = resolveMrpValue(option.mrp, option.price);
+
+          if (Number(option.mrp ?? -1) !== Number(nextOptionMrp ?? -1)) {
+            hasChanges = true;
+          }
+
+          return {
+            ...option,
+            mrp: nextOptionMrp,
+          };
+        }),
+      }));
+    }
+
+    if (!hasChanges) {
+      continue;
+    }
+
+    await product.save();
+    updatedCount += 1;
+  }
+
+  return updatedCount;
+};
+
 const applyProductGalleryImport = async (galleryEntries = []) => {
   if (!Array.isArray(galleryEntries) || !galleryEntries.length) {
     return { matched: 0, updated: 0 };
@@ -1040,6 +1120,7 @@ module.exports = {
   resolveProductVariant,
   syncProductIdentifiers,
   syncProductImages,
+  syncProductMrpValues,
   syncProductOptionGroups,
   syncProductStockValues,
   syncSeedProductMetadata,

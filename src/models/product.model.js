@@ -31,6 +31,11 @@ const productOptionSchema = new mongoose.Schema(
       min: 0,
       default: null,
     },
+    mrp: {
+      type: Number,
+      min: 0,
+      default: null,
+    },
     stock: {
       type: Number,
       min: 0,
@@ -165,6 +170,11 @@ const productSchema = new mongoose.Schema(
       type: Number,
       required: true,
       min: 0,
+    },
+    mrp: {
+      type: Number,
+      min: 0,
+      default: null,
     },
     weight: {
       type: Number,
