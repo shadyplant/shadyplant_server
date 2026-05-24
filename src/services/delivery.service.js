@@ -88,14 +88,14 @@ const calculateTransportCharge = (weight, distance) => {
   ) {
     return {
       success: false,
-      message: "Invalid location or quantity. Weight and distance must be numeric values.",
+      message: "Invalid location or chargeable weight. Weight and distance must be numeric values.",
     };
   }
 
   if (weight <= 0 || distance <= 0) {
     return {
       success: false,
-      message: "Invalid location or quantity.",
+      message: "Invalid location or chargeable weight.",
     };
   }
 
@@ -103,7 +103,7 @@ const calculateTransportCharge = (weight, distance) => {
     if (distance > 600) {
       return {
         success: false,
-        message: `Distance out of range for quantity ${weight}. Maximum supported range is 600 km.`,
+        message: `Distance out of range for chargeable weight ${weight} kg. Maximum supported range is 600 km.`,
       };
     }
 
@@ -124,7 +124,7 @@ const calculateTransportCharge = (weight, distance) => {
     if (distance > 1200) {
       return {
         success: false,
-        message: `Distance out of range for quantity ${weight}. Maximum supported range is 1200 km.`,
+        message: `Distance out of range for chargeable weight ${weight} kg. Maximum supported range is 1200 km.`,
       };
     }
 
@@ -158,7 +158,7 @@ const calculateTransportCharge = (weight, distance) => {
 
   return {
     success: false,
-    message: `Quantity out of range. Supported range is 1-30000.`,
+    message: "Chargeable weight out of range. Supported range is 1-30000 kg.",
   };
 };
 

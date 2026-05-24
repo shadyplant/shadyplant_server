@@ -7,6 +7,7 @@ const {
   login,
   logout,
   me,
+  sessionUser,
   refresh,
   register,
   verifyRegisterOtp,
@@ -28,6 +29,7 @@ router.post("/login", loginLimiter, login);
 router.post("/google", loginLimiter, googleLogin);
 router.post("/refresh", refreshLimiter, refresh);
 router.post("/logout", refreshLimiter, logout);
+router.get("/session-user", refreshLimiter, sessionUser);
 router.get("/me", requireAuth, me);
 router.put("/me", requireAuth, updateMe);
 router.post("/forgot-password/request", forgotPasswordLimiter, forgotPasswordRequest);

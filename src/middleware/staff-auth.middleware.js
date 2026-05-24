@@ -1,3 +1,4 @@
+const { env } = require("../config/env");
 const { findStaffAccountById } = require("../repositories/staff.repository");
 const { verifyStaffAccessToken } = require("../services/token.service");
 const { ApiError } = require("../utils/apiError");
@@ -15,12 +16,15 @@ const requireStaffAuth = async (req, res, next) => {
   try {
     const authorizationHeader = req.get("authorization") || "";
     const [scheme, token] = authorizationHeader.split(" ");
+    const cookieToken = req.cookies?.[env.staff.cookieName];
+    const staffToken =
+      scheme === "Bearer" && token ? token : cookieToken || null;
 
-    if (scheme !== "Bearer" || !token) {
-      return next(new ApiError(401, "Staff authorization header is required."));
+    if (!staffToken) {
+      return next(new ApiError(401, "Staff authentication is required."));
     }
 
-    const payload = verifyStaffAccessToken(token);
+    const payload = verifyStaffAccessToken(staffToken);
     const staffAccount = await findStaffAccountById(payload.sub);
 
     if (!staffAccount || staffAccount.status !== "active") {

@@ -1,17 +1,16 @@
 const {
-  createCashfreeCheckout,
+  createPaymentCheckout,
   getPaymentAttemptStatus,
-  processCashfreeWebhook,
-  verifyCashfreePaymentAttempt,
-  simulateSuccessfulWebhook,
+  processPaymentWebhook,
+  verifyPaymentAttempt: verifyStoredPaymentAttempt,
 } = require("../services/payment.service");
 const { asyncHandler } = require("../utils/asyncHandler");
 
 const createCheckout = asyncHandler(async (req, res) => {
-  const checkout = await createCashfreeCheckout(req.auth.userId, req.body);
+  const checkout = await createPaymentCheckout(req.auth.userId, req.body);
 
   res.status(201).json({
-    message: "Cashfree checkout created successfully.",
+    message: "Payment checkout created successfully.",
     data: { checkout },
   });
 });
@@ -29,9 +28,12 @@ const getPaymentAttempt = asyncHandler(async (req, res) => {
 });
 
 const handleWebhook = asyncHandler(async (req, res) => {
-  const result = await processCashfreeWebhook({
-    signature: req.headers["x-webhook-signature"],
-    timestamp: req.headers["x-webhook-timestamp"],
+  const result = await processPaymentWebhook({
+    authorization: req.headers.authorization,
+    signature:
+      req.headers["x-webhook-signature"] || req.headers["x-cashfree-signature"],
+    timestamp:
+      req.headers["x-webhook-timestamp"] || req.headers["x-cashfree-timestamp"],
     rawBody: req.rawBody,
     event: req.body,
   });
@@ -43,7 +45,7 @@ const handleWebhook = asyncHandler(async (req, res) => {
 });
 
 const verifyPaymentAttempt = asyncHandler(async (req, res) => {
-  const paymentAttempt = await verifyCashfreePaymentAttempt(
+  const paymentAttempt = await verifyStoredPaymentAttempt(
     req.auth.userId,
     req.params.paymentAttemptId,
   );
@@ -54,22 +56,9 @@ const verifyPaymentAttempt = asyncHandler(async (req, res) => {
   });
 });
 
-const simulateWebhook = asyncHandler(async (req, res) => {
-  const paymentAttempt = await simulateSuccessfulWebhook(
-    req.auth.userId,
-    req.params.paymentAttemptId,
-  );
-
-  res.status(200).json({
-    message: "Test webhook processed successfully.",
-    data: { paymentAttempt },
-  });
-});
-
 module.exports = {
   createCheckout,
   getPaymentAttempt,
   handleWebhook,
-  simulateWebhook,
   verifyPaymentAttempt,
 };

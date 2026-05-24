@@ -18,7 +18,6 @@ const mapReviewRow = (row) => {
     productId: row.product_id,
     userId: row.user_id,
     rating: Number(row.rating),
-    title: row.title || "",
     body: row.body || "",
     status: row.status,
     authorName: row.author_name || "Anonymous buyer",
@@ -33,6 +32,17 @@ const mapReviewRow = (row) => {
       row.updated_at instanceof Date
         ? row.updated_at.toISOString()
         : row.updated_at,
+    adminReply:
+      String(row.admin_reply_body || "").trim()
+        ? {
+            body: String(row.admin_reply_body || "").trim(),
+            authorName: String(row.admin_reply_author_name || "").trim() || "Store team",
+            updatedAt:
+              row.admin_reply_updated_at instanceof Date
+                ? row.admin_reply_updated_at.toISOString()
+                : row.admin_reply_updated_at || null,
+          }
+        : null,
   };
 };
 
@@ -99,7 +109,6 @@ const createOrUpdateProductReview = async ({
   productId,
   userId,
   rating,
-  title,
   body,
   status,
   authorName,
@@ -122,20 +131,25 @@ const createOrUpdateProductReview = async ({
       author_location,
       verified_buyer,
       helpful_count,
+      admin_reply_body,
+      admin_reply_author_name,
+      admin_reply_updated_at,
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0, $11, $12
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 0, '', '', NULL, $11, $12
     )
     ON CONFLICT (product_id, user_id)
     DO UPDATE SET
       rating = EXCLUDED.rating,
-      title = EXCLUDED.title,
       body = EXCLUDED.body,
       status = EXCLUDED.status,
       author_name = EXCLUDED.author_name,
       author_location = EXCLUDED.author_location,
       verified_buyer = EXCLUDED.verified_buyer,
+      admin_reply_body = '',
+      admin_reply_author_name = '',
+      admin_reply_updated_at = NULL,
       updated_at = EXCLUDED.updated_at
     RETURNING *`,
     [
@@ -143,7 +157,7 @@ const createOrUpdateProductReview = async ({
       productId,
       userId,
       rating,
-      title,
+      "",
       body,
       status,
       authorName,
@@ -161,13 +175,15 @@ const updateProductReview = async (reviewId, updates) => {
   const statement = buildUpdateStatement(
     {
       rating: updates.rating,
-      title: updates.title,
       body: updates.body,
       status: updates.status,
       authorName: updates.authorName,
       authorLocation: updates.authorLocation,
       verifiedBuyer: updates.verifiedBuyer,
       helpfulCount: updates.helpfulCount,
+      adminReplyBody: updates.adminReplyBody,
+      adminReplyAuthorName: updates.adminReplyAuthorName,
+      adminReplyUpdatedAt: updates.adminReplyUpdatedAt,
       updatedAt: new Date(),
     },
     {
@@ -175,6 +191,9 @@ const updateProductReview = async (reviewId, updates) => {
       authorLocation: "author_location",
       verifiedBuyer: "verified_buyer",
       helpfulCount: "helpful_count",
+      adminReplyBody: "admin_reply_body",
+      adminReplyAuthorName: "admin_reply_author_name",
+      adminReplyUpdatedAt: "admin_reply_updated_at",
       updatedAt: "updated_at",
     },
   );
@@ -197,19 +216,20 @@ const deleteProductReview = async (reviewId) => {
   await query("DELETE FROM product_reviews WHERE id = $1", [reviewId]);
 };
 
-const hasUserPurchasedProduct = async (userId, productId) => {
+const hasUserDeliveredProduct = async (userId, productId) => {
   const result = await query(
     `SELECT EXISTS (
       SELECT 1
       FROM orders
       CROSS JOIN LATERAL jsonb_array_elements(order_items) AS item
       WHERE user_id = $1
+        AND current_status = 'delivered'
         AND item->>'productId' = $2
-    ) AS has_purchased`,
+    ) AS has_delivered_order`,
     [userId, productId],
   );
 
-  return Boolean(result.rows[0]?.has_purchased);
+  return Boolean(result.rows[0]?.has_delivered_order);
 };
 
 module.exports = {
@@ -218,7 +238,7 @@ module.exports = {
   deleteProductReview,
   findProductReviewById,
   findProductReviewByProductIdAndUserId,
-  hasUserPurchasedProduct,
+  hasUserDeliveredProduct,
   listProductReviews,
   listApprovedReviewsByProductId,
   updateProductReview,

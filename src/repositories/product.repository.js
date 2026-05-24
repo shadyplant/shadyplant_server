@@ -25,6 +25,23 @@ const buildProductIdentifier = (product = {}) => {
   return `PRD${hashStringToProductDigits(source)}`;
 };
 
+const buildProductSkuId = (product = {}) => {
+  const explicitSkuId = String(product.skuId || "").trim();
+
+  if (explicitSkuId) {
+    return explicitSkuId;
+  }
+
+  const normalizedSku = String(product.sku || "").trim();
+
+  if (normalizedSku) {
+    return normalizedSku;
+  }
+
+  const source = String(product.id || product._id || product.productId || "").trim();
+  return source ? `SKU${hashStringToProductDigits(source)}` : "";
+};
+
 const slugifyValue = (value) =>
   String(value || "")
     .trim()
@@ -203,6 +220,33 @@ const normalizeProductOptionGroups = (product = {}) =>
     ? product.optionGroups
         .map((group, index) => normalizeProductOptionGroup(group, index))
         .filter(Boolean)
+    : [];
+
+const normalizeProductDetailSections = (product = {}) =>
+  Array.isArray(product.detailSections)
+    ? product.detailSections
+        .map((section, index) => {
+          if (!section || typeof section !== "object") {
+            return null;
+          }
+
+          const title = String(section.title || "").trim();
+          const description = String(section.description || "").trim();
+
+          if (!title || !description) {
+            return null;
+          }
+
+          return {
+            title,
+            description,
+            sortOrder: Number.isFinite(Number(section.sortOrder))
+              ? Math.max(0, Math.floor(Number(section.sortOrder)))
+              : index,
+          };
+        })
+        .filter(Boolean)
+        .sort((left, right) => left.sortOrder - right.sortOrder)
     : [];
 
 const normalizeProductOptionSelections = (value) => {
@@ -399,11 +443,23 @@ const prepareProductForStorage = (product = {}) => {
     ...product,
     id,
     productId: buildProductIdentifier({ ...product, id }),
+    sku: String(product.sku || "").trim() || undefined,
+    skuId: buildProductSkuId({ ...product, id }) || undefined,
+    variety: String(product.variety || "").trim(),
+    containerSize: String(product.containerSize || "").trim(),
+    height: String(product.height || "").trim(),
+    brand: String(product.brand || "").trim(),
     mrp: resolveMrpValue(product.mrp, product.price),
     stock: normalizeNonNegativeInteger(product.stock, 0),
+    variant: String(product.variant || "").trim(),
+    status:
+      String(product.status || "").trim().toLowerCase() === "inactive"
+        ? "inactive"
+        : "active",
     images: normalizeProductImages(product),
     videoClips: normalizeProductVideoClips({ ...product, id }),
     optionGroups: normalizeProductOptionGroups(product),
+    detailSections: normalizeProductDetailSections(product),
   };
 };
 
@@ -471,8 +527,14 @@ const serializeProduct = (product) => {
   return {
     id: product.id,
     productId: buildProductIdentifier(product),
+    sku: String(product.sku || "").trim(),
+    skuId: buildProductSkuId(product),
     name: product.name,
     category: product.category,
+    variety: String(product.variety || "").trim(),
+    containerSize: String(product.containerSize || "").trim(),
+    height: String(product.height || "").trim(),
+    brand: String(product.brand || "").trim(),
     price: product.price,
     mrp: resolveMrpValue(product.mrp, product.price) ?? Number(product.price || 0),
     weight: Number(product.weight) > 0 ? Number(product.weight) : 0,
@@ -484,14 +546,22 @@ const serializeProduct = (product) => {
     isOnTrend: Boolean(product.isOnTrend),
     isFeaturedLatest: Boolean(product.isFeaturedLatest),
     packLabel: product.packLabel,
+    variant: String(product.variant || "").trim(),
     unit: product.unit,
     badge: product.badge,
     description: product.description,
+    status:
+      String(product.status || "").trim().toLowerCase() === "inactive"
+        ? "inactive"
+        : "active",
     image: images[0] || "",
     images,
     tags,
     videoClips: normalizeProductVideoClips(product),
     optionGroups: normalizeProductOptionGroups(product),
+    detailSections: normalizeProductDetailSections(product),
+    createdAt: product.createdAt || null,
+    updatedAt: product.updatedAt || null,
   };
 };
 
@@ -504,6 +574,14 @@ const buildProductFilters = (filters = {}) => {
 
   if (filters.productId) {
     query.productId = filters.productId;
+  }
+
+  if (filters.sku) {
+    query.sku = filters.sku;
+  }
+
+  if (filters.skuId) {
+    query.skuId = filters.skuId;
   }
 
   if (filters.excludeId) {
@@ -566,6 +644,37 @@ const findProductsByIds = async (ids = []) => {
   return products.map(serializeProduct);
 };
 
+const findProductsBySkus = async (skus = []) => {
+  const normalizedSkus = [...new Set(
+    skus.map((sku) => String(sku || "").trim()).filter(Boolean),
+  )];
+
+  if (!normalizedSkus.length) {
+    return [];
+  }
+
+  const products = await Product.find({ sku: { $in: normalizedSkus } }).lean();
+  return products.map(serializeProduct);
+};
+
+const findProductsBySkuReferences = async (references = []) => {
+  const normalizedReferences = [...new Set(
+    references.map((reference) => String(reference || "").trim()).filter(Boolean),
+  )];
+
+  if (!normalizedReferences.length) {
+    return [];
+  }
+
+  const products = await Product.find({
+    $or: [
+      { sku: { $in: normalizedReferences } },
+      { skuId: { $in: normalizedReferences } },
+    ],
+  }).lean();
+  return products.map(serializeProduct);
+};
+
 const createProduct = async (productData = {}) => {
   const preparedProduct = prepareProductForStorage(productData);
   const createdProduct = await Product.create(preparedProduct);
@@ -590,12 +699,42 @@ const updateProduct = async (productLookupId, updates = {}) => {
   };
   const nextImages = normalizeProductImages(nextData);
 
+  if (updates.sku !== undefined) {
+    existingProduct.sku = String(updates.sku || "").trim() || undefined;
+  }
+
+  if (updates.skuId !== undefined || updates.sku !== undefined) {
+    existingProduct.skuId =
+      buildProductSkuId({
+        ...existingProduct.toObject(),
+        sku: updates.sku !== undefined ? String(updates.sku || "").trim() : existingProduct.sku,
+        skuId:
+          updates.skuId !== undefined
+            ? String(updates.skuId || "").trim()
+            : existingProduct.skuId,
+      }) || undefined;
+  }
+
   existingProduct.name =
     updates.name !== undefined ? String(updates.name || "").trim() : existingProduct.name;
   existingProduct.category =
     updates.category !== undefined
       ? String(updates.category || "").trim()
       : existingProduct.category;
+  existingProduct.variety =
+    updates.variety !== undefined
+      ? String(updates.variety || "").trim()
+      : existingProduct.variety;
+  existingProduct.containerSize =
+    updates.containerSize !== undefined
+      ? String(updates.containerSize || "").trim()
+      : existingProduct.containerSize;
+  existingProduct.height =
+    updates.height !== undefined
+      ? String(updates.height || "").trim()
+      : existingProduct.height;
+  existingProduct.brand =
+    updates.brand !== undefined ? String(updates.brand || "").trim() : existingProduct.brand;
   existingProduct.price =
     updates.price !== undefined ? Number(updates.price) : existingProduct.price;
   existingProduct.mrp =
@@ -624,6 +763,10 @@ const updateProduct = async (productLookupId, updates = {}) => {
     updates.packLabel !== undefined
       ? String(updates.packLabel || "").trim()
       : existingProduct.packLabel;
+  existingProduct.variant =
+    updates.variant !== undefined
+      ? String(updates.variant || "").trim()
+      : existingProduct.variant;
   existingProduct.unit =
     updates.unit !== undefined ? String(updates.unit || "").trim() : existingProduct.unit;
   existingProduct.badge =
@@ -632,6 +775,12 @@ const updateProduct = async (productLookupId, updates = {}) => {
     updates.description !== undefined
       ? String(updates.description || "").trim()
       : existingProduct.description;
+  existingProduct.status =
+    updates.status !== undefined
+      ? String(updates.status || "").trim().toLowerCase() === "inactive"
+        ? "inactive"
+        : "active"
+      : existingProduct.status;
   if (updates.tags !== undefined) {
     existingProduct.tags = Array.isArray(updates.tags)
       ? updates.tags.map((tag) => String(tag || "").trim()).filter(Boolean)
@@ -648,11 +797,73 @@ const updateProduct = async (productLookupId, updates = {}) => {
       optionGroups: updates.optionGroups,
     });
   }
+  if (updates.detailSections !== undefined) {
+    existingProduct.detailSections = normalizeProductDetailSections({
+      detailSections: updates.detailSections,
+    });
+  }
   existingProduct.image = nextImages[0] || "";
   existingProduct.images = nextImages;
   await existingProduct.save();
 
   return serializeProduct(existingProduct.toObject());
+};
+
+const adjustProductStock = async (
+  productLookupId,
+  stockDelta,
+  { floorAtZero = true } = {},
+) => {
+  const normalizedLookupId = String(productLookupId || "").trim();
+  const normalizedDelta = Math.trunc(Number(stockDelta || 0));
+
+  if (!normalizedLookupId || !Number.isFinite(normalizedDelta) || normalizedDelta === 0) {
+    return null;
+  }
+
+  const query = {
+    $or: [{ id: normalizedLookupId }, { productId: normalizedLookupId }],
+  };
+
+  if (floorAtZero && normalizedDelta < 0) {
+    query.stock = { $gte: Math.abs(normalizedDelta) };
+  }
+
+  const updatedProduct = await Product.findOneAndUpdate(
+    query,
+    {
+      $inc: { stock: normalizedDelta },
+      $set: { updatedAt: new Date() },
+    },
+    {
+      new: true,
+    },
+  ).lean();
+
+  return updatedProduct ? serializeProduct(updatedProduct) : null;
+};
+
+const setProductStock = async (productLookupId, nextStock) => {
+  const normalizedLookupId = String(productLookupId || "").trim();
+  const normalizedNextStock = Math.trunc(Number(nextStock));
+
+  if (!normalizedLookupId || !Number.isFinite(normalizedNextStock) || normalizedNextStock < 0) {
+    return null;
+  }
+
+  const updatedProduct = await Product.findOneAndUpdate(
+    {
+      $or: [{ id: normalizedLookupId }, { productId: normalizedLookupId }],
+    },
+    {
+      $set: { stock: normalizedNextStock, updatedAt: new Date() },
+    },
+    {
+      new: true,
+    },
+  ).lean();
+
+  return updatedProduct ? serializeProduct(updatedProduct) : null;
 };
 
 const reserveProductStock = async (productLookupId, quantity, variantId = "") => {
@@ -868,6 +1079,25 @@ const syncProductIdentifiers = async () => {
     }
 
     product.productId = nextProductId;
+    await product.save();
+    updatedCount += 1;
+  }
+
+  return updatedCount;
+};
+
+const syncProductSkuIds = async () => {
+  const products = await Product.find({});
+  let updatedCount = 0;
+
+  for (const product of products) {
+    const nextSkuId = buildProductSkuId(product);
+
+    if (!nextSkuId || nextSkuId === String(product.skuId || "").trim()) {
+      continue;
+    }
+
+    product.skuId = nextSkuId;
     await product.save();
     updatedCount += 1;
   }
@@ -1099,9 +1329,12 @@ const applyProductGalleryImport = async (galleryEntries = []) => {
 };
 
 module.exports = {
+  adjustProductStock,
+  setProductStock,
   PRODUCT_ID_PATTERN,
   applyProductGalleryImport,
   buildProductIdentifier,
+  buildProductSkuId,
   buildProductVariantId,
   countProducts,
   createProduct,
@@ -1109,6 +1342,8 @@ module.exports = {
   deleteProduct,
   findProductById,
   findProductsByIds,
+  findProductsBySkuReferences,
+  findProductsBySkus,
   getDefaultProductOptionSelections,
   listProducts,
   normalizeProductOptionSelections,
@@ -1120,6 +1355,7 @@ module.exports = {
   resolveProductVariant,
   syncProductIdentifiers,
   syncProductImages,
+  syncProductSkuIds,
   syncProductMrpValues,
   syncProductOptionGroups,
   syncProductStockValues,

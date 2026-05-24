@@ -3,6 +3,10 @@ const path = require("path");
 
 dotenv.config();
 
+const nodeEnv = process.env.NODE_ENV || "development";
+const isProduction = nodeEnv === "production";
+const isDevelopment = nodeEnv === "development";
+
 const hasConfiguredValue = (value) => {
   const normalizedValue = String(value || "").trim();
 
@@ -78,7 +82,7 @@ const auth = {
   refreshTokenSecret: getRequiredEnv("REFRESH_TOKEN_SECRET"),
   passwordResetTokenSecret:
     process.env.PASSWORD_RESET_TOKEN_SECRET ||
-    process.env.REFRESH_TOKEN_SECRET ||
+    (isProduction ? getRequiredEnv("PASSWORD_RESET_TOKEN_SECRET") : process.env.REFRESH_TOKEN_SECRET) ||
     getRequiredEnv("REFRESH_TOKEN_SECRET"),
   accessTokenTtl: process.env.ACCESS_TOKEN_TTL || "15m",
   refreshTokenTtl: process.env.REFRESH_TOKEN_TTL || "7d",
@@ -90,13 +94,19 @@ const auth = {
   cookieName: process.env.COOKIE_NAME || "ggn_refresh_token",
   otpExpiryMinutes: parseInteger(process.env.OTP_EXPIRY_MINUTES, 10),
   otpMaxAttempts: parseInteger(process.env.OTP_MAX_ATTEMPTS, 5),
-  exposeDevOtp: parseBoolean(process.env.AUTH_EXPOSE_DEV_OTP, false),
+  exposeDevOtp: !isProduction && parseBoolean(process.env.AUTH_EXPOSE_DEV_OTP, false),
+  loginAttemptWindowMinutes: parseInteger(
+    process.env.AUTH_LOGIN_ATTEMPT_WINDOW_MINUTES,
+    15,
+  ),
+  loginMaxAttempts: parseInteger(process.env.AUTH_LOGIN_MAX_ATTEMPTS, 10),
+  loginLockoutMinutes: parseInteger(process.env.AUTH_LOGIN_LOCKOUT_MINUTES, 15),
 };
 
 const env = {
   appName: String(process.env.APP_NAME || "Grass Green Nursery").trim(),
   port: parseInteger(process.env.PORT, 8080),
-  nodeEnv: process.env.NODE_ENV || "development",
+  nodeEnv,
   clientOrigins: getRequiredEnv("CLIENT_ORIGIN")
     .split(",")
     .map((origin) => origin.trim())
@@ -107,6 +117,11 @@ const env = {
       process.env.STAFF_ACCESS_TOKEN_SECRET ||
       process.env.ACCESS_TOKEN_SECRET,
     accessTokenTtl: process.env.STAFF_ACCESS_TOKEN_TTL || "12h",
+    accessTokenMaxAgeMs: parseDurationToMs(
+      process.env.STAFF_ACCESS_TOKEN_TTL || "12h",
+      12 * 60 * 60 * 1000,
+    ),
+    cookieName: process.env.STAFF_COOKIE_NAME || "ggn_admin_access_token",
     bootstrapOrganizationName: String(
       process.env.STAFF_BOOTSTRAP_ORGANIZATION_NAME || "Grass Green Nursery",
     ).trim(),
@@ -120,6 +135,15 @@ const env = {
     bootstrapOwnerPassword: String(
       process.env.STAFF_BOOTSTRAP_OWNER_PASSWORD || "",
     ).trim(),
+    loginAttemptWindowMinutes: parseInteger(
+      process.env.STAFF_LOGIN_ATTEMPT_WINDOW_MINUTES,
+      15,
+    ),
+    loginMaxAttempts: parseInteger(process.env.STAFF_LOGIN_MAX_ATTEMPTS, 8),
+    loginLockoutMinutes: parseInteger(
+      process.env.STAFF_LOGIN_LOCKOUT_MINUTES,
+      30,
+    ),
   },
   firebase: {
     projectId: process.env.FIREBASE_PROJECT_ID || "",
@@ -142,6 +166,9 @@ const env = {
         "",
     ).trim(),
   },
+  server: {
+    publicBaseUrl: String(process.env.SERVER_PUBLIC_BASE_URL || "").trim(),
+  },
   mailer: {
     transport: String(
       process.env.MAILER_TRANSPORT ||
@@ -161,22 +188,35 @@ const env = {
     user: String(process.env.MAILER_USER || "").trim(),
     pass: String(process.env.MAILER_PASS || "").trim(),
   },
-  cashfree: {
-    environment: String(
-      process.env.CASHFREE_ENVIRONMENT ||
+  paymentGateway: {
+    provider: String(process.env.PAYMENT_GATEWAY_PROVIDER || "phonepe")
+      .trim()
+      .toLowerCase(),
+    mode: String(
+      process.env.PAYMENT_GATEWAY_MODE ||
         (process.env.NODE_ENV === "production" ? "production" : "sandbox"),
     )
       .trim()
       .toLowerCase(),
-    appId: String(process.env.CASHFREE_APP_ID || "").trim(),
-    secretKey: String(process.env.CASHFREE_SECRET_KEY || "").trim(),
-    webhookSecret: String(process.env.CASHFREE_WEBHOOK_SECRET || "").trim(),
-    apiVersion: String(process.env.CASHFREE_API_VERSION || "2025-01-01").trim(),
-    notifyUrl: String(process.env.CASHFREE_NOTIFY_URL || "").trim(),
-    webhookToleranceSeconds: parseInteger(
-      process.env.CASHFREE_WEBHOOK_TOLERANCE_SECONDS,
-      300,
+    orderExpireAfterSeconds: parseInteger(
+      process.env.PAYMENT_GATEWAY_ORDER_EXPIRE_AFTER_SECONDS,
+      1200,
     ),
+    phonepe: {
+      clientId: String(process.env.PHONEPE_CLIENT_ID || "").trim(),
+      clientVersion: String(process.env.PHONEPE_CLIENT_VERSION || "1").trim(),
+      clientSecret: String(process.env.PHONEPE_CLIENT_SECRET || "").trim(),
+      webhookUsername: String(process.env.PHONEPE_WEBHOOK_USERNAME || "").trim(),
+      webhookPassword: String(process.env.PHONEPE_WEBHOOK_PASSWORD || "").trim(),
+    },
+    cashfree: {
+      clientId: String(process.env.CASHFREE_CLIENT_ID || "").trim(),
+      clientSecret: String(process.env.CASHFREE_CLIENT_SECRET || "").trim(),
+      webhookSecret: String(process.env.CASHFREE_WEBHOOK_SECRET || "").trim(),
+      apiVersion: String(
+        process.env.CASHFREE_API_VERSION || "2025-01-01",
+      ).trim(),
+    },
   },
   postgres: {
     url:
@@ -185,6 +225,24 @@ const env = {
   },
   redis: {
     url: process.env.REDIS_URL || "redis://localhost:6379",
+  },
+  productSync: {
+    bearerToken: String(process.env.SYNC_PRODUCTS_BEARER_TOKEN || "").trim(),
+    rateLimitWindowMs: parseInteger(
+      process.env.SYNC_PRODUCTS_RATE_LIMIT_WINDOW_MS,
+      60 * 1000,
+    ),
+    rateLimitMax: parseInteger(process.env.SYNC_PRODUCTS_RATE_LIMIT_MAX, 10),
+    maxBatchSize: parseInteger(process.env.SYNC_PRODUCTS_MAX_BATCH_SIZE, 10000),
+    bulkWriteChunkSize: parseInteger(
+      process.env.SYNC_PRODUCTS_BULK_WRITE_CHUNK_SIZE,
+      500,
+    ),
+    lockTtlSeconds: parseInteger(process.env.SYNC_PRODUCTS_LOCK_TTL_SECONDS, 900),
+    replayTtlSeconds: parseInteger(
+      process.env.SYNC_PRODUCTS_REPLAY_TTL_SECONDS,
+      24 * 60 * 60,
+    ),
   },
   mongo: {
     uri:
@@ -196,10 +254,13 @@ const env = {
     quoteTtlMinutes: parseInteger(process.env.CHECKOUT_QUOTE_TTL_MINUTES, 15),
     cartDeliveryOffsetDays: parseInteger(process.env.CART_DELIVERY_OFFSET_DAYS, 5),
   },
+  serverSecurity: {
+    trustProxy: parseBoolean(process.env.TRUST_PROXY, false),
+  },
 };
 
-env.isProduction = env.nodeEnv === "production";
-env.isDevelopment = env.nodeEnv === "development";
+env.isProduction = isProduction;
+env.isDevelopment = isDevelopment;
 env.isFirebaseConfigured = Boolean(
   env.firebase.serviceAccountPath ||
     env.firebase.serviceAccountJson ||
@@ -207,19 +268,39 @@ env.isFirebaseConfigured = Boolean(
       env.firebase.clientEmail &&
       env.firebase.privateKey),
 );
-env.cashfree.environment =
-  env.cashfree.environment === "production" ? "production" : "sandbox";
-env.cashfree.isCheckoutConfigured = Boolean(
-  env.cashfree.appId && env.cashfree.secretKey,
+env.paymentGateway.mode =
+  env.paymentGateway.mode === "production" ? "production" : "sandbox";
+env.paymentGateway.provider = env.paymentGateway.provider || "phonepe";
+env.paymentGateway.phonepe.isCheckoutConfigured = Boolean(
+  env.paymentGateway.phonepe.clientId &&
+    env.paymentGateway.phonepe.clientVersion &&
+    env.paymentGateway.phonepe.clientSecret,
 );
-env.cashfree.isWebhookConfigured = hasConfiguredValue(
-  env.cashfree.webhookSecret,
+env.paymentGateway.phonepe.isWebhookConfigured = Boolean(
+  hasConfiguredValue(env.paymentGateway.phonepe.webhookUsername) &&
+    hasConfiguredValue(env.paymentGateway.phonepe.webhookPassword),
 );
-env.cashfree.isConfigured = Boolean(
-  env.cashfree.isCheckoutConfigured && env.cashfree.isWebhookConfigured,
+env.paymentGateway.cashfree.isCheckoutConfigured = Boolean(
+  env.paymentGateway.cashfree.clientId &&
+    env.paymentGateway.cashfree.clientSecret &&
+    env.paymentGateway.cashfree.apiVersion,
 );
+env.paymentGateway.cashfree.isWebhookConfigured = Boolean(
+  env.paymentGateway.cashfree.webhookSecret &&
+    env.paymentGateway.cashfree.apiVersion,
+);
+env.paymentGateway.isCheckoutConfigured = Boolean(
+  env.paymentGateway.phonepe.isCheckoutConfigured ||
+    env.paymentGateway.cashfree.isCheckoutConfigured,
+);
+env.paymentGateway.isWebhookConfigured = Boolean(
+  env.paymentGateway.phonepe.isWebhookConfigured ||
+    env.paymentGateway.cashfree.isWebhookConfigured,
+);
+env.paymentGateway.isConfigured = env.paymentGateway.isCheckoutConfigured;
 env.mailer.isEnabled = env.mailer.transport !== "disabled";
 env.mailer.hasSmtpCredentials = Boolean(env.mailer.user && env.mailer.pass);
 env.mailer.hasSmtpConfig = Boolean(env.mailer.host && env.mailer.port);
+env.productSync.isConfigured = hasConfiguredValue(env.productSync.bearerToken);
 
 module.exports = { env };

@@ -14,7 +14,7 @@ const {
   REVIEW_STATUSES,
   createOrUpdateProductReview,
   findProductReviewByProductIdAndUserId,
-  hasUserPurchasedProduct,
+  hasUserDeliveredProduct,
   listApprovedReviewsByProductId,
 } = require("../repositories/product-review.repository");
 const {
@@ -52,15 +52,10 @@ const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
 const normalizeReviewPayload = (payload = {}) => {
   const rating = Number(payload.rating);
-  const title = String(payload.title || "").trim();
   const review = String(payload.review || payload.body || "").trim();
 
   if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
     throw new ApiError(400, "Rating must be between 1 and 5.");
-  }
-
-  if (title.length < 3) {
-    throw new ApiError(400, "Review title must be at least 3 characters.");
   }
 
   if (review.length < 10) {
@@ -69,7 +64,6 @@ const normalizeReviewPayload = (payload = {}) => {
 
   return {
     rating: Math.round(rating),
-    title,
     review,
   };
 };
@@ -88,10 +82,10 @@ const serializePublishedReview = (review) => ({
   location: review.authorLocation,
   date: review.createdAt,
   rating: review.rating,
-  title: review.title,
   body: review.body,
   helpfulCount: review.helpfulCount,
   verifiedBuyer: review.verifiedBuyer,
+  adminReply: review.adminReply,
 });
 
 const buildReviewSummary = (reviews = []) => {
@@ -140,6 +134,18 @@ const getProductReviews = async (productId) => {
   };
 };
 
+const getReviewEligibility = async (userId, productId) => {
+  const hasDeliveredOrder = await hasUserDeliveredProduct(userId, productId);
+
+  return {
+    canReview: hasDeliveredOrder,
+    hasDeliveredOrder,
+    reason: hasDeliveredOrder
+      ? null
+      : "Only delivered orders are eligible for product reviews.",
+  };
+};
+
 const createProductReview = async (userId, productId, payload = {}) => {
   const product = await getProductDetails(productId);
   const user = await findUserById(userId);
@@ -149,12 +155,12 @@ const createProductReview = async (userId, productId, payload = {}) => {
   }
 
   const normalizedPayload = normalizeReviewPayload(payload);
-  const verifiedBuyer = await hasUserPurchasedProduct(userId, product.id);
+  const eligibility = await getReviewEligibility(userId, product.id);
 
-  if (!verifiedBuyer) {
+  if (!eligibility.canReview) {
     throw new ApiError(
       403,
-      "Only verified buyers can submit product reviews for this item.",
+      eligibility.reason || "Only delivered orders can be reviewed.",
     );
   }
 
@@ -162,12 +168,12 @@ const createProductReview = async (userId, productId, payload = {}) => {
     productId: product.id,
     userId,
     rating: normalizedPayload.rating,
-    title: normalizedPayload.title,
+    title: "",
     body: normalizedPayload.review,
     status: REVIEW_STATUSES.pending,
     authorName: String(user.fullName || "Anonymous buyer").trim() || "Anonymous buyer",
     authorLocation: buildReviewLocation(user),
-    verifiedBuyer,
+    verifiedBuyer: true,
   });
 
   return {
@@ -179,29 +185,32 @@ const createProductReview = async (userId, productId, payload = {}) => {
 
 const getMyProductReview = async (userId, productId) => {
   const product = await getProductDetails(productId);
+  const eligibility = await getReviewEligibility(userId, product.id);
   const review = await findProductReviewByProductIdAndUserId(product.id, userId);
 
   if (!review) {
     return {
       productId: product.id,
       review: null,
+      eligibility,
     };
   }
 
   return {
     productId: product.id,
+    eligibility,
     review: {
       id: review.id,
       author: review.authorName,
       location: review.authorLocation,
       date: review.createdAt,
       rating: review.rating,
-      title: review.title,
       body: review.body,
       helpfulCount: review.helpfulCount,
       verifiedBuyer: review.verifiedBuyer,
       status: review.status,
       updatedAt: review.updatedAt,
+      adminReply: review.adminReply,
     },
   };
 };

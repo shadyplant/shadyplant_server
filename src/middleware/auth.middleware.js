@@ -1,4 +1,5 @@
 const { findUserById } = require("../repositories/user.repository");
+const { assertUserAccountIsActive } = require("../services/auth.service");
 const { verifyAccessToken } = require("../services/token.service");
 const { ApiError } = require("../utils/apiError");
 
@@ -17,6 +18,8 @@ const requireAuth = async (req, res, next) => {
     if (!user) {
       return next(new ApiError(401, "User linked to this token no longer exists."));
     }
+
+    assertUserAccountIsActive(user);
 
     req.auth = {
       userId: user.id,

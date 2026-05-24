@@ -27,9 +27,20 @@ const mapOrderRow = (row) => {
     deliveryLocation: row.delivery_location || {},
     paymentMethod: row.payment_method,
     paymentStatus: row.payment_status,
-    currentStatus: row.current_status || "confirmed",
+    currentStatus: row.current_status || "placed",
     trackingTimeline: row.tracking_timeline || [],
     paymentDetails: row.payment_details || {},
+    cancellationReason: row.cancellation_reason || "",
+    cancellationNote: row.cancellation_note || "",
+    cancelledAt:
+      row.cancelled_at instanceof Date
+        ? row.cancelled_at.toISOString()
+        : row.cancelled_at || null,
+    refundReason: row.refund_reason || "",
+    refundedAt:
+      row.refunded_at instanceof Date
+        ? row.refunded_at.toISOString()
+        : row.refunded_at || null,
     pricing: row.pricing || {},
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -72,12 +83,17 @@ const createOrder = async (orderData) => {
       current_status,
       tracking_timeline,
       payment_details,
+      cancellation_reason,
+      cancellation_note,
+      cancelled_at,
+      refund_reason,
+      refunded_at,
       pricing,
       created_at,
       updated_at
     ) VALUES (
       $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12::jsonb, $13::jsonb,
-      $14::jsonb, $15::jsonb, $16::jsonb, $17, $18, $19, $20::jsonb, $21::jsonb, $22::jsonb, $23, $24
+      $14::jsonb, $15::jsonb, $16::jsonb, $17, $18, $19, $20::jsonb, $21::jsonb, $22, $23, $24, $25, $26, $27::jsonb, $28, $29
     )`,
     [
       id,
@@ -98,9 +114,14 @@ const createOrder = async (orderData) => {
       JSON.stringify(order.deliveryLocation || {}),
       order.paymentMethod,
       order.paymentStatus,
-      order.currentStatus || "confirmed",
+      order.currentStatus || "placed",
       JSON.stringify(order.trackingTimeline || []),
       JSON.stringify(order.paymentDetails || {}),
+      order.cancellationReason || "",
+      order.cancellationNote || "",
+      order.cancelledAt || null,
+      order.refundReason || "",
+      order.refundedAt || null,
       JSON.stringify(order.pricing || {}),
       order.createdAt,
       order.updatedAt,
@@ -125,6 +146,20 @@ const findOrderById = async (orderId) => {
   const result = await query("SELECT * FROM orders WHERE id = $1 LIMIT 1", [
     orderId,
   ]);
+  return mapOrderRow(result.rows[0]);
+};
+
+const findOrderByPaymentReference = async (paymentReference) => {
+  const result = await query(
+    `SELECT * FROM orders
+      WHERE payment_details->>'merchantOrderId' = $1
+         OR payment_details->>'gatewayOrderId' = $1
+         OR payment_details->>'cashfreeOrderId' = $1
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [paymentReference],
+  );
+
   return mapOrderRow(result.rows[0]);
 };
 
@@ -173,6 +208,11 @@ const updateOrder = async (orderId, updates) => {
       paymentMethod: updates.paymentMethod,
       paymentStatus: updates.paymentStatus,
       currentStatus: updates.currentStatus,
+      cancellationReason: updates.cancellationReason,
+      cancellationNote: updates.cancellationNote,
+      cancelledAt: updates.cancelledAt,
+      refundReason: updates.refundReason,
+      refundedAt: updates.refundedAt,
       trackingTimeline:
         updates.trackingTimeline !== undefined
           ? JSON.stringify(updates.trackingTimeline || [])
@@ -202,6 +242,11 @@ const updateOrder = async (orderId, updates) => {
       paymentMethod: "payment_method",
       paymentStatus: "payment_status",
       currentStatus: "current_status",
+      cancellationReason: "cancellation_reason",
+      cancellationNote: "cancellation_note",
+      cancelledAt: "cancelled_at",
+      refundReason: "refund_reason",
+      refundedAt: "refunded_at",
       trackingTimeline: { column: "tracking_timeline", cast: "jsonb" },
       paymentDetails: { column: "payment_details", cast: "jsonb" },
       pricing: { column: "pricing", cast: "jsonb" },
@@ -226,6 +271,7 @@ const updateOrder = async (orderId, updates) => {
 module.exports = {
   createOrder,
   findOrderById,
+  findOrderByPaymentReference,
   listAllOrders,
   listOrdersByUserId,
   updateOrder,

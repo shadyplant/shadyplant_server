@@ -2,6 +2,7 @@ const {
   createUserOrder,
   getUserOrder,
   listUserOrders,
+  submitUserRefundAccountDetails,
 } = require("../services/order.service");
 const { asyncHandler } = require("../utils/asyncHandler");
 
@@ -32,8 +33,22 @@ const getOrder = asyncHandler(async (req, res) => {
   });
 });
 
+const submitRefundAccountDetails = asyncHandler(async (req, res) => {
+  const order = await submitUserRefundAccountDetails(
+    req.auth.userId,
+    req.params.orderId,
+    req.body,
+  );
+
+  res.status(200).json({
+    message: "Refund account details submitted successfully.",
+    data: { order },
+  });
+});
+
 module.exports = {
   createOrder,
   getOrder,
   listOrders,
+  submitRefundAccountDetails,
 };

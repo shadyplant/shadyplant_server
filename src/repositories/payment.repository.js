@@ -84,9 +84,26 @@ const findPaymentAttemptById = async (paymentAttemptId) => {
   return mapPaymentAttemptRow(result.rows[0]);
 };
 
+const claimPaymentAttemptForFinalization = async (paymentAttemptId) => {
+  const result = await query(
+    `UPDATE payment_attempts
+      SET status = 'processing', updated_at = NOW()
+      WHERE id = $1
+        AND order_id IS NULL
+        AND status IN ('created', 'checkout_ready')
+      RETURNING *`,
+    [paymentAttemptId],
+  );
+
+  return mapPaymentAttemptRow(result.rows[0]);
+};
+
 const findPaymentAttemptByGatewayOrderId = async (gatewayOrderId) => {
   const result = await query(
-    "SELECT * FROM payment_attempts WHERE razorpay->>'orderId' = $1 LIMIT 1",
+    `SELECT * FROM payment_attempts
+      WHERE razorpay->>'gatewayOrderId' = $1
+         OR razorpay->>'orderId' = $1
+      LIMIT 1`,
     [gatewayOrderId],
   );
   return mapPaymentAttemptRow(result.rows[0]);
@@ -139,6 +156,7 @@ const updatePaymentAttempt = async (paymentAttemptId, updates) => {
 };
 
 module.exports = {
+  claimPaymentAttemptForFinalization,
   createPaymentAttempt,
   findPaymentAttemptById,
   findPaymentAttemptByGatewayOrderId,

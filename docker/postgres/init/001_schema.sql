@@ -10,7 +10,15 @@ CREATE TABLE IF NOT EXISTS users (
   profile_image TEXT,
   delivery_address JSONB NOT NULL DEFAULT '{}'::jsonb,
   billing_details JSONB NOT NULL DEFAULT '{}'::jsonb,
+  payment_access JSONB NOT NULL DEFAULT '{"cashOnDelivery":true,"onlinePayment":true,"emi":false}'::jsonb,
   is_verified BOOLEAN NOT NULL DEFAULT FALSE,
+  is_vip BOOLEAN NOT NULL DEFAULT FALSE,
+  customer_category TEXT NOT NULL DEFAULT 'normal'
+    CHECK (customer_category IN ('normal', 'nursery_owner', 'garden_contractor')),
+  account_status TEXT NOT NULL DEFAULT 'active'
+    CHECK (account_status IN ('active', 'banned_temporary', 'banned_permanent')),
+  banned_until TIMESTAMPTZ,
+  ban_reason TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -28,6 +36,38 @@ CREATE UNIQUE INDEX IF NOT EXISTS users_google_uid_unique_idx
 
 ALTER TABLE users
   ADD COLUMN IF NOT EXISTS billing_details JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS payment_access JSONB NOT NULL DEFAULT '{"cashOnDelivery":true,"onlinePayment":true,"emi":false}'::jsonb;
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS is_vip BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS customer_category TEXT NOT NULL DEFAULT 'normal';
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS account_status TEXT NOT NULL DEFAULT 'active';
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS banned_until TIMESTAMPTZ;
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS ban_reason TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE users
+  DROP CONSTRAINT IF EXISTS users_customer_category_check;
+
+ALTER TABLE users
+  ADD CONSTRAINT users_customer_category_check
+  CHECK (customer_category IN ('normal', 'nursery_owner', 'garden_contractor'));
+
+ALTER TABLE users
+  DROP CONSTRAINT IF EXISTS users_account_status_check;
+
+ALTER TABLE users
+  ADD CONSTRAINT users_account_status_check
+  CHECK (account_status IN ('active', 'banned_temporary', 'banned_permanent'));
 
 CREATE TABLE IF NOT EXISTS organizations (
   id UUID PRIMARY KEY,
@@ -99,7 +139,7 @@ CREATE TABLE IF NOT EXISTS orders (
   delivery_location JSONB NOT NULL DEFAULT '{}'::jsonb,
   payment_method TEXT NOT NULL,
   payment_status TEXT NOT NULL,
-  current_status TEXT NOT NULL DEFAULT 'confirmed'
+  current_status TEXT NOT NULL DEFAULT 'placed'
     CHECK (
       current_status IN (
         'placed',
@@ -109,11 +149,18 @@ CREATE TABLE IF NOT EXISTS orders (
         'dispatched',
         'shipped',
         'out_for_delivery',
-        'delivered'
+        'delivered',
+        'cancelled',
+        'refunded'
       )
     ),
   tracking_timeline JSONB NOT NULL DEFAULT '[]'::jsonb,
   payment_details JSONB NOT NULL DEFAULT '{}'::jsonb,
+  cancellation_reason TEXT NOT NULL DEFAULT '',
+  cancellation_note TEXT NOT NULL DEFAULT '',
+  cancelled_at TIMESTAMPTZ,
+  refund_reason TEXT NOT NULL DEFAULT '',
+  refunded_at TIMESTAMPTZ,
   pricing JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -132,13 +179,28 @@ ALTER TABLE orders
   ADD COLUMN IF NOT EXISTS delivery_location JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 ALTER TABLE orders
-  ADD COLUMN IF NOT EXISTS current_status TEXT NOT NULL DEFAULT 'confirmed';
+  ADD COLUMN IF NOT EXISTS current_status TEXT NOT NULL DEFAULT 'placed';
 
 ALTER TABLE orders
-  ALTER COLUMN current_status SET DEFAULT 'confirmed';
+  ALTER COLUMN current_status SET DEFAULT 'placed';
 
 ALTER TABLE orders
   ADD COLUMN IF NOT EXISTS tracking_timeline JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+ALTER TABLE orders
+  ADD COLUMN IF NOT EXISTS cancellation_reason TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE orders
+  ADD COLUMN IF NOT EXISTS cancellation_note TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE orders
+  ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
+
+ALTER TABLE orders
+  ADD COLUMN IF NOT EXISTS refund_reason TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE orders
+  ADD COLUMN IF NOT EXISTS refunded_at TIMESTAMPTZ;
 
 ALTER TABLE orders
   DROP CONSTRAINT IF EXISTS orders_current_status_check;
@@ -154,9 +216,68 @@ ALTER TABLE orders
       'dispatched',
       'shipped',
       'out_for_delivery',
-      'delivered'
+      'delivered',
+      'cancelled',
+      'refunded'
     )
   );
+
+CREATE TABLE IF NOT EXISTS coupon_codes (
+  id UUID PRIMARY KEY,
+  code TEXT NOT NULL,
+  type TEXT NOT NULL
+    CHECK (type IN ('adjust', 'discount')),
+  adjust_amount INTEGER NOT NULL DEFAULT 0,
+  discount_percent NUMERIC(5,2) NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active'
+    CHECK (status IN ('active', 'inactive', 'used', 'expired')),
+  usage_mode TEXT NOT NULL DEFAULT 'one_time'
+    CHECK (usage_mode IN ('one_time')),
+  total_uses_allowed INTEGER NOT NULL DEFAULT 1
+    CHECK (total_uses_allowed > 0),
+  total_uses_redeemed INTEGER NOT NULL DEFAULT 0
+    CHECK (total_uses_redeemed >= 0),
+  redeemed_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  redeemed_order_id UUID REFERENCES orders(id) ON DELETE SET NULL,
+  redeemed_at TIMESTAMPTZ,
+  reserved_reference TEXT,
+  reserved_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  reserved_at TIMESTAMPTZ,
+  reservation_expires_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ,
+  notes TEXT NOT NULL DEFAULT '',
+  created_by_staff_account_id UUID REFERENCES staff_accounts(id) ON DELETE SET NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (
+    (type = 'adjust' AND adjust_amount > 0 AND discount_percent = 0)
+    OR
+    (type = 'discount' AND discount_percent > 0 AND adjust_amount = 0)
+  ),
+  CHECK (total_uses_redeemed <= total_uses_allowed)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS coupon_codes_code_unique_idx
+  ON coupon_codes (LOWER(code));
+
+CREATE INDEX IF NOT EXISTS coupon_codes_status_created_idx
+  ON coupon_codes (status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS coupon_codes_type_created_idx
+  ON coupon_codes (type, created_at DESC);
+
+ALTER TABLE coupon_codes
+  ADD COLUMN IF NOT EXISTS reserved_reference TEXT;
+
+ALTER TABLE coupon_codes
+  ADD COLUMN IF NOT EXISTS reserved_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL;
+
+ALTER TABLE coupon_codes
+  ADD COLUMN IF NOT EXISTS reserved_at TIMESTAMPTZ;
+
+ALTER TABLE coupon_codes
+  ADD COLUMN IF NOT EXISTS reservation_expires_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS payment_attempts (
   id UUID PRIMARY KEY,
@@ -180,6 +301,17 @@ CREATE INDEX IF NOT EXISTS payment_attempts_user_id_idx
 
 CREATE INDEX IF NOT EXISTS payment_attempts_razorpay_order_id_idx
   ON payment_attempts ((razorpay->>'orderId'));
+
+CREATE TABLE IF NOT EXISTS app_runtime_settings (
+  setting_key TEXT PRIMARY KEY,
+  setting_value JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_by_staff_account_id UUID REFERENCES staff_accounts(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS app_runtime_settings_updated_idx
+  ON app_runtime_settings (updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS service_catalog (
   id UUID PRIMARY KEY,
@@ -222,6 +354,15 @@ CREATE TABLE IF NOT EXISTS product_reviews (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE product_reviews
+  ADD COLUMN IF NOT EXISTS admin_reply_body TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE product_reviews
+  ADD COLUMN IF NOT EXISTS admin_reply_author_name TEXT NOT NULL DEFAULT '';
+
+ALTER TABLE product_reviews
+  ADD COLUMN IF NOT EXISTS admin_reply_updated_at TIMESTAMPTZ;
 
 CREATE UNIQUE INDEX IF NOT EXISTS product_reviews_product_user_unique_idx
   ON product_reviews (product_id, user_id);
@@ -271,3 +412,23 @@ CREATE UNIQUE INDEX IF NOT EXISTS home_category_items_org_key_unique_idx
 
 CREATE INDEX IF NOT EXISTS home_category_items_org_active_sort_idx
   ON home_category_items (organization_id, is_active, sort_order, created_at);
+
+CREATE TABLE IF NOT EXISTS home_slider_banners (
+  id UUID PRIMARY KEY,
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  item_key TEXT NOT NULL,
+  title TEXT NOT NULL,
+  href TEXT NOT NULL DEFAULT '/search',
+  desktop_image TEXT NOT NULL DEFAULT '',
+  mobile_image TEXT NOT NULL DEFAULT '',
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  sort_order INTEGER NOT NULL DEFAULT 100,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS home_slider_banners_org_key_unique_idx
+  ON home_slider_banners (organization_id, LOWER(item_key));
+
+CREATE INDEX IF NOT EXISTS home_slider_banners_org_active_sort_idx
+  ON home_slider_banners (organization_id, is_active, sort_order, created_at);

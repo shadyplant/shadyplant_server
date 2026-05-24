@@ -1,5 +1,5 @@
 const {
-  createCartCashfreeCheckout,
+  createCartPaymentCheckout,
   placeCartOrderCashOnDelivery,
   previewCartCheckout,
 } = require("../services/checkout.service");
@@ -24,7 +24,7 @@ const placeCashOnDeliveryOrder = asyncHandler(async (req, res) => {
 });
 
 const createOnlineCheckout = asyncHandler(async (req, res) => {
-  const checkout = await createCartCashfreeCheckout(req.auth.userId, req.body);
+  const checkout = await createCartPaymentCheckout(req.auth.userId, req.body);
 
   res.status(201).json({
     message: "Online checkout created successfully.",

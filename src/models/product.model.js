@@ -142,6 +142,29 @@ const productVideoClipSchema = new mongoose.Schema(
   },
 );
 
+const productDetailSectionSchema = new mongoose.Schema(
+  {
+    title: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    description: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    sortOrder: {
+      type: Number,
+      default: 0,
+    },
+  },
+  {
+    _id: false,
+    id: false,
+  },
+);
+
 const productSchema = new mongoose.Schema(
   {
     id: {
@@ -156,6 +179,16 @@ const productSchema = new mongoose.Schema(
       unique: true,
       trim: true,
     },
+    sku: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    skuId: {
+      type: String,
+      trim: true,
+      default: null,
+    },
     name: {
       type: String,
       required: true,
@@ -165,6 +198,26 @@ const productSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
+    },
+    variety: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    containerSize: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    height: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    brand: {
+      type: String,
+      trim: true,
+      default: "",
     },
     price: {
       type: Number,
@@ -209,6 +262,11 @@ const productSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    variant: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     unit: {
       type: String,
       required: true,
@@ -222,6 +280,12 @@ const productSchema = new mongoose.Schema(
     description: {
       type: String,
       required: true,
+      trim: true,
+    },
+    status: {
+      type: String,
+      enum: ["active", "inactive"],
+      default: "active",
       trim: true,
     },
     image: {
@@ -254,6 +318,10 @@ const productSchema = new mongoose.Schema(
       type: [productVideoClipSchema],
       default: undefined,
     },
+    detailSections: {
+      type: [productDetailSectionSchema],
+      default: undefined,
+    },
   },
   {
     timestamps: true,
@@ -262,6 +330,22 @@ const productSchema = new mongoose.Schema(
 );
 
 productSchema.index({ category: 1 });
+productSchema.index(
+  { sku: 1 },
+  {
+    unique: true,
+    sparse: true,
+  },
+);
+productSchema.index(
+  { skuId: 1 },
+  {
+    unique: true,
+    sparse: true,
+  },
+);
+productSchema.index({ status: 1 });
+productSchema.index({ brand: 1 });
 productSchema.index({ badge: 1 });
 productSchema.index({ isOnTrend: 1 });
 productSchema.index({ isFeaturedLatest: 1 });

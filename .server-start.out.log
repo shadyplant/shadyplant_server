@@ -1,0 +1,20 @@
+
+> grass_green_nursery_server@1.0.0 start
+> node src/server.js
+
+◇ injected env (39) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+Grass Green Nursery server listening on http://localhost:8080
+[API] 2026-05-23T18:52:04.786Z GET /api/v1/health 200 7.8ms ::ffff:127.0.0.1
+[API] 2026-05-23T18:52:53.116Z GET /api/v1/admin/auth/me 401 7.2ms ::ffff:127.0.0.1
+[API] 2026-05-23T18:52:53.135Z GET /api/v1/health 200 0.8ms ::ffff:127.0.0.1
+[API] 2026-05-23T19:02:53.630Z GET /api/v1/admin/auth/me 401 8.3ms ::ffff:127.0.0.1
+[API] 2026-05-23T19:02:53.808Z GET /api/v1/admin/auth/setup-status 200 312.3ms ::ffff:127.0.0.1
+[API] 2026-05-23T19:36:37.053Z GET /api/v1/home-slider-banners 404 14.7ms ::1
+[API] 2026-05-23T19:36:37.089Z GET /api/v1/auth/session-user 401 28.7ms ::1
+[API] 2026-05-23T19:36:37.110Z GET /api/v1/products 200 206.7ms ::1
+[API] 2026-05-23T19:36:37.319Z GET /api/v1/home-categories 200 293.1ms ::1
+[API] 2026-05-23T19:36:38.373Z GET /api/v1/products 200 52.3ms ::1
+[API] 2026-05-23T19:36:38.463Z POST /api/v1/auth/refresh 200 121.3ms ::1
+[API] 2026-05-23T19:36:38.592Z GET /api/v1/cart 200 88.4ms ::1
+[API] 2026-05-23T19:36:38.595Z GET /api/v1/wishlist 200 76.7ms ::1
+[API] 2026-05-23T19:36:38.623Z GET /api/v1/products/stock-alerts/me 200 103.5ms ::1

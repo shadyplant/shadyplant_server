@@ -10,6 +10,10 @@ const {
 const apiRoutes = require("./routes");
 
 const app = express();
+
+const isAllowedOrigin = (origin) =>
+  env.clientOrigins.includes(String(origin || "").trim());
+
 const captureRawBody = (req, res, buffer) => {
   if (buffer?.length) {
     req.rawBody = Buffer.from(buffer);
@@ -34,10 +38,21 @@ const apiRequestLogger = (req, res, next) => {
 };
 
 app.disable("x-powered-by");
+if (env.serverSecurity.trustProxy) {
+  app.set("trust proxy", 1);
+}
 app.use(
   cors({
     origin(origin, callback) {
-      return callback(null, true);
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (isAllowedOrigin(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("CORS origin denied."));
     },
     credentials: true,
   }),

@@ -1,39 +1,75 @@
 const express = require("express");
 const {
+  addCustomerCartItemForAdmin,
+  adjustProductStockForAdmin,
+  createCustomerCartPaymentCheckoutForAdmin,
+  createCustomerForAdmin,
+  createCouponForAdmin,
   createProductForAdmin,
   createServiceForAdmin,
   createHomeCategoryForAdmin,
+  createHomeSliderBannerForAdmin,
   createStaffForAdmin,
+  deleteCouponForAdmin,
   deleteProductForAdmin,
   deleteHomeCategoryForAdmin,
+  deleteHomeSliderBannerForAdmin,
   deleteReviewForAdmin,
   deleteServiceForAdmin,
   deleteStaffForAdmin,
   getAdminMe,
   getAdminSetupStatusController,
   getCustomerForAdmin,
+  getCustomerCartForAdmin,
+  getCustomerCartPaymentAttemptForAdmin,
   getHomeCategoryForAdmin,
+  getHomeSliderBannerForAdmin,
   getOrderForAdmin,
+  getPaymentGatewaySettingsForAdmin,
   getProductForAdmin,
+  getProductStockSnapshotForAdmin,
   getServiceForAdmin,
   listCustomersForAdmin,
+  listCouponsForAdmin,
   listHomeCategoriesForAdmin,
+  listHomeSliderBannersForAdmin,
   listOrdersForAdmin,
+  listProductStockAdjustmentLogsForAdmin,
   listProductsForAdmin,
   listReviewsForAdmin,
+  listSalesReportForAdmin,
   listServicesForAdmin,
   listStaffForAdmin,
   listTransactionsForAdmin,
   loginAdmin,
+  logoutAdmin,
+  previewCustomerCartCheckoutForAdmin,
+  removeCustomerCartItemForAdmin,
   setupInitialAdminOwnerController,
+  syncProductsForAdmin,
   updateCustomerForAdmin,
+  updateCustomerCartItemForAdmin,
+  updateCouponForAdmin,
   updateHomeCategoryForAdmin,
+  updateHomeSliderBannerForAdmin,
   updateOrderForAdmin,
+  updatePaymentGatewaySettingsForAdmin,
   updateProductForAdmin,
   updateReviewForAdmin,
   updateServiceForAdmin,
   updateStaffForAdmin,
 } = require("../controllers/admin.controller");
+const {
+  attachProductSyncRequestContext,
+  handleProductSyncIdempotency,
+  requireProductSyncBearerToken,
+  validateProductSyncPayloadShape,
+} = require("../middleware/product-sync.middleware");
+const {
+  adminLoginLimiter,
+  adminSetupLimiter,
+  productSyncLimiter,
+} = require("../middleware/rateLimiters");
 const {
   requireStaffAuth,
   requireStaffRoles,
@@ -41,10 +77,23 @@ const {
 
 const router = express.Router();
 
-router.post("/auth/login", loginAdmin);
+router.post("/auth/login", adminLoginLimiter, loginAdmin);
+router.post("/auth/logout", logoutAdmin);
 router.get("/auth/setup-status", getAdminSetupStatusController);
-router.post("/auth/setup", setupInitialAdminOwnerController);
+router.post("/auth/setup", adminSetupLimiter, setupInitialAdminOwnerController);
 router.get("/auth/me", requireStaffAuth, getAdminMe);
+router.get(
+  "/settings/payment-gateway",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  getPaymentGatewaySettingsForAdmin,
+);
+router.patch(
+  "/settings/payment-gateway",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  updatePaymentGatewaySettingsForAdmin,
+);
 
 router.get(
   "/home-categories",
@@ -78,10 +127,57 @@ router.delete(
 );
 
 router.get(
-  "/products",
+  "/home-slider-banners",
   requireStaffAuth,
   requireStaffRoles(["catalog"]),
+  listHomeSliderBannersForAdmin,
+);
+router.post(
+  "/home-slider-banners",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  createHomeSliderBannerForAdmin,
+);
+router.get(
+  "/home-slider-banners/:itemId",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  getHomeSliderBannerForAdmin,
+);
+router.patch(
+  "/home-slider-banners/:itemId",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  updateHomeSliderBannerForAdmin,
+);
+router.delete(
+  "/home-slider-banners/:itemId",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  deleteHomeSliderBannerForAdmin,
+);
+
+router.get(
+  "/products",
+  requireStaffAuth,
+  requireStaffRoles(["support"]),
   listProductsForAdmin,
+);
+router.post(
+  "/sync-products",
+  attachProductSyncRequestContext,
+  requireProductSyncBearerToken,
+  productSyncLimiter,
+  validateProductSyncPayloadShape,
+  handleProductSyncIdempotency,
+  syncProductsForAdmin,
+);
+router.post(
+  "/products/stock-snapshot",
+  attachProductSyncRequestContext,
+  requireProductSyncBearerToken,
+  productSyncLimiter,
+  getProductStockSnapshotForAdmin,
 );
 router.post(
   "/products",
@@ -90,10 +186,22 @@ router.post(
   createProductForAdmin,
 );
 router.get(
+  "/products/:productId/stock-logs",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  listProductStockAdjustmentLogsForAdmin,
+);
+router.get(
   "/products/:productId",
   requireStaffAuth,
   requireStaffRoles(["catalog"]),
   getProductForAdmin,
+);
+router.patch(
+  "/products/:productId/stock",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  adjustProductStockForAdmin,
 );
 router.patch(
   "/products/:productId",
@@ -164,6 +272,37 @@ router.get(
   requireStaffRoles(["operations"]),
   listTransactionsForAdmin,
 );
+router.get(
+  "/sales-report",
+  requireStaffAuth,
+  requireStaffRoles(["operations"]),
+  listSalesReportForAdmin,
+);
+
+router.get(
+  "/coupons",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  listCouponsForAdmin,
+);
+router.post(
+  "/coupons",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  createCouponForAdmin,
+);
+router.patch(
+  "/coupons/:couponId",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  updateCouponForAdmin,
+);
+router.delete(
+  "/coupons/:couponId",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  deleteCouponForAdmin,
+);
 
 router.get(
   "/orders",
@@ -190,11 +329,59 @@ router.get(
   requireStaffRoles(["support"]),
   listCustomersForAdmin,
 );
+router.post(
+  "/customers",
+  requireStaffAuth,
+  requireStaffRoles(["support"]),
+  createCustomerForAdmin,
+);
 router.get(
   "/customers/:customerId",
   requireStaffAuth,
   requireStaffRoles(["support"]),
   getCustomerForAdmin,
+);
+router.get(
+  "/customers/:customerId/cart",
+  requireStaffAuth,
+  requireStaffRoles(["support"]),
+  getCustomerCartForAdmin,
+);
+router.post(
+  "/customers/:customerId/cart/checkout/preview",
+  requireStaffAuth,
+  requireStaffRoles(["support"]),
+  previewCustomerCartCheckoutForAdmin,
+);
+router.post(
+  "/customers/:customerId/cart/checkout/payment",
+  requireStaffAuth,
+  requireStaffRoles(["support"]),
+  createCustomerCartPaymentCheckoutForAdmin,
+);
+router.get(
+  "/customers/:customerId/cart/checkout/payment-attempts/:paymentAttemptId",
+  requireStaffAuth,
+  requireStaffRoles(["support"]),
+  getCustomerCartPaymentAttemptForAdmin,
+);
+router.post(
+  "/customers/:customerId/cart/items",
+  requireStaffAuth,
+  requireStaffRoles(["support"]),
+  addCustomerCartItemForAdmin,
+);
+router.patch(
+  "/customers/:customerId/cart/items/:itemId",
+  requireStaffAuth,
+  requireStaffRoles(["support"]),
+  updateCustomerCartItemForAdmin,
+);
+router.delete(
+  "/customers/:customerId/cart/items/:itemId",
+  requireStaffAuth,
+  requireStaffRoles(["support"]),
+  removeCustomerCartItemForAdmin,
 );
 router.patch(
   "/customers/:customerId",
@@ -206,25 +393,25 @@ router.patch(
 router.get(
   "/staff",
   requireStaffAuth,
-  requireStaffRoles(["admin"]),
+  requireStaffRoles(["manager"]),
   listStaffForAdmin,
 );
 router.post(
   "/staff",
   requireStaffAuth,
-  requireStaffRoles(["admin"]),
+  requireStaffRoles(["manager"]),
   createStaffForAdmin,
 );
 router.patch(
   "/staff/:staffId",
   requireStaffAuth,
-  requireStaffRoles(["admin"]),
+  requireStaffRoles(["manager"]),
   updateStaffForAdmin,
 );
 router.delete(
   "/staff/:staffId",
   requireStaffAuth,
-  requireStaffRoles(["admin"]),
+  requireStaffRoles(["manager"]),
   deleteStaffForAdmin,
 );
 

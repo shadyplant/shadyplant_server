@@ -6,6 +6,15 @@ const {
 } = require("./template.utils");
 
 const ORDER_STATUS_CONTENT = {
+  placed: {
+    eyebrow: "Order received",
+    heading: "Your order is awaiting confirmation",
+    preview: "We received your order and it is waiting for admin confirmation.",
+    message:
+      "We have received your order successfully. Our team will review plant readiness, delivery safety, and payment details before confirming dispatch.",
+    nextStep:
+      "We will send another update as soon as your order is confirmed by the admin team.",
+  },
   confirmed: {
     eyebrow: "Order confirmed",
     heading: "Your order is confirmed",
@@ -41,6 +50,24 @@ const ORDER_STATUS_CONTENT = {
       "Your order has been marked as delivered successfully. We hope everything arrived in excellent condition.",
     nextStep:
       "If you have a moment, we would love your feedback on the order experience.",
+  },
+  cancelled: {
+    eyebrow: "Order cancelled",
+    heading: "Your order has been cancelled",
+    preview: "This order has been cancelled by the admin team.",
+    message:
+      "Your order has been cancelled. If any clarification or follow-up is needed, our team will help you with the next steps.",
+    nextStep:
+      "If you still need help with plant selection or delivery coverage, please contact support.",
+  },
+  refunded: {
+    eyebrow: "Order refunded",
+    heading: "Your refund has been recorded",
+    preview: "A refund has been recorded for this order.",
+    message:
+      "A refund has been recorded for this order. Our team will assist if you need any further clarification.",
+    nextStep:
+      "Please keep your order details available if you contact support regarding the refund.",
   },
 };
 

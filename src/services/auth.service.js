@@ -20,6 +20,11 @@ const {
   OTP_PURPOSES,
   saveOtpRecord,
 } = require("../repositories/reset-otp.repository");
+const {
+  clearFailedLoginAttempts,
+  getLockoutState,
+  recordFailedLoginAttempt,
+} = require("../repositories/login-attempt.repository");
 const { initializeFirebase } = require("../config/firebase");
 const { env } = require("../config/env");
 const { sendOtpEmail } = require("../mailer");
@@ -43,6 +48,10 @@ const {
   verifyRefreshToken,
   verifyPasswordResetToken,
 } = require("./token.service");
+const {
+  assertUserAccountIsActive,
+  resolveUserPaymentAccess,
+} = require("./user-account.service");
 
 const getUserAuthMethods = (user) => ({
   hasPasswordLogin: Boolean(user?.passwordHash),
@@ -70,6 +79,8 @@ const sanitizeUser = (user) => ({
   authMethods: getUserAuthMethods(user),
   profileImage: user.profileImage,
   isVerified: Boolean(user.isVerified),
+  isVip: Boolean(user.isVip),
+  paymentAccess: resolveUserPaymentAccess(user),
   deliveryAddress: {
     formattedAddress: user.deliveryAddress?.formattedAddress || "",
     line1: user.deliveryAddress?.line1 || "",
@@ -249,6 +260,15 @@ const validateLoginPayload = ({ identifier, password }) => {
   }
 };
 
+const getAccountLockoutMessage = (retryAfterSeconds) => {
+  const retryAfterMinutes = Math.max(
+    1,
+    Math.ceil(Number(retryAfterSeconds || 0) / 60),
+  );
+
+  return `Too many failed login attempts. Try again in ${retryAfterMinutes} minute${retryAfterMinutes === 1 ? "" : "s"}.`;
+};
+
 const validateProfileUpdatePayload = ({
   fullName,
   phoneNumber,
@@ -273,20 +293,19 @@ const validateProfileUpdatePayload = ({
     Object.values(normalizedDeliveryAddress).some(Boolean);
 
   if (hasDeliveryAddress) {
-    const hasFormattedOnlyAddress =
-      Boolean(normalizedDeliveryAddress.formattedAddress) &&
-      !normalizedDeliveryAddress.line1 &&
-      !normalizedDeliveryAddress.city &&
-      !normalizedDeliveryAddress.state &&
-      !normalizedDeliveryAddress.postalCode;
+    const hasFormattedAddress = Boolean(normalizedDeliveryAddress.formattedAddress);
+    const hasCompleteStructuredAddress = Boolean(
+      normalizedDeliveryAddress.line1 &&
+        normalizedDeliveryAddress.city &&
+        normalizedDeliveryAddress.state &&
+        normalizedDeliveryAddress.postalCode,
+    );
 
-    if (
-      !hasFormattedOnlyAddress &&
-      (!normalizedDeliveryAddress.line1 ||
-        !normalizedDeliveryAddress.city ||
-        !normalizedDeliveryAddress.state ||
-        !normalizedDeliveryAddress.postalCode)
-    ) {
+    // Checkout and location pickers may provide a reliable formatted address
+    // without every structured field, especially postal code. Accept that for
+    // profile persistence and only require the full structured set when there
+    // is no formatted address to fall back to.
+    if (!hasFormattedAddress && !hasCompleteStructuredAddress) {
       throw new ApiError(
         400,
         "Complete the main delivery address fields or provide a full formatted address.",
@@ -490,6 +509,8 @@ const syncUserFromGoogleIdentity = async (decodedToken) => {
 };
 
 const createSessionBundle = async (user, sessionMeta) => {
+  assertUserAccountIsActive(user);
+
   const session = await createSession({
     userId: user.id,
     expiresAt: new Date(Date.now() + env.auth.refreshTokenMaxAgeMs),
@@ -570,6 +591,14 @@ const sendOtpEmailOrThrow = async ({
 const getDevOtpPayload = (otp) =>
   env.auth.exposeDevOtp ? { devOtp: otp } : {};
 
+const logOtpForDevelopment = (label, identifier, otp) => {
+  if (!env.auth.exposeDevOtp) {
+    return;
+  }
+
+  console.info(`[Auth OTP] ${label} code for ${identifier}: ${otp}`);
+};
+
 const registerManualUser = async (payload, sessionMeta) => {
   const normalizedPayload = normalizeRegistrationPayload(payload);
   validateRegistrationPayload(normalizedPayload);
@@ -577,12 +606,38 @@ const registerManualUser = async (payload, sessionMeta) => {
   const email = normalizeEmail(normalizedPayload.email);
   const existingUser = await findUserByEmail(email);
   const existingPhoneUser = await findUserByPhone(normalizedPayload.phoneNumber);
+  const existingAccount = existingUser || existingPhoneUser;
 
-  if (existingUser || existingPhoneUser) {
-    throw new ApiError(
-      409,
-      "An account with this email or phone number already exists.",
-    );
+  if (existingAccount) {
+    if (
+      existingAccount.authProvider === "local" &&
+      !existingAccount.isVerified &&
+      existingAccount.email
+    ) {
+      const otp = await issueOtpForPurpose({
+        identifier: normalizeEmail(existingAccount.email),
+        purpose: OTP_PURPOSES.registration,
+      });
+
+      await sendOtpEmailOrThrow({
+        to: existingAccount.email,
+        customerName: existingAccount.fullName,
+        otp,
+        purpose: "email verification",
+        expiresInMinutes: env.auth.otpExpiryMinutes,
+      });
+
+      logOtpForDevelopment("Registration", existingAccount.email, otp);
+
+      return {
+        message: "If the account can be registered, an OTP will be sent for verification.",
+        ...getDevOtpPayload(otp),
+      };
+    }
+
+    return {
+      message: "If the account can be registered, an OTP will be sent for verification.",
+    };
   }
 
   const user = await createUser({
@@ -607,10 +662,10 @@ const registerManualUser = async (payload, sessionMeta) => {
     expiresInMinutes: env.auth.otpExpiryMinutes,
   });
 
-  console.info(`[Auth OTP] Registration code for ${user.email}: ${otp}`);
+  logOtpForDevelopment("Registration", user.email, otp);
 
   return {
-    message: "OTP sent for verification.",
+    message: "If the account can be registered, an OTP will be sent for verification.",
     ...getDevOtpPayload(otp),
   };
 };
@@ -645,10 +700,21 @@ const loginManualUser = async (payload, sessionMeta) => {
   validateLoginPayload({ identifier, password: payload.password });
 
   const lookup = await resolveUserByIdentifier(identifier);
+  const lockoutState = await getLockoutState("customer", lookup.lookupIdentifier);
+
+  if (lockoutState.isLocked) {
+    throw new ApiError(429, getAccountLockoutMessage(lockoutState.retryAfterSeconds));
+  }
+
   const user = lookup.user;
 
   if (!user || !user.passwordHash) {
     console.warn(`Failed login attempt for ${lookup.lookupIdentifier}.`);
+    await recordFailedLoginAttempt("customer", lookup.lookupIdentifier, {
+      windowMinutes: env.auth.loginAttemptWindowMinutes,
+      maxAttempts: env.auth.loginMaxAttempts,
+      lockoutMinutes: env.auth.loginLockoutMinutes,
+    });
     throw new ApiError(401, "Email or password is incorrect.");
   }
 
@@ -656,12 +722,20 @@ const loginManualUser = async (payload, sessionMeta) => {
     throw new ApiError(403, "Verify your account before logging in.");
   }
 
+  assertUserAccountIsActive(user);
+
   const isPasswordValid = await comparePassword(payload.password, user.passwordHash);
   if (!isPasswordValid) {
     console.warn(`Failed login attempt for ${lookup.lookupIdentifier}.`);
+    await recordFailedLoginAttempt("customer", lookup.lookupIdentifier, {
+      windowMinutes: env.auth.loginAttemptWindowMinutes,
+      maxAttempts: env.auth.loginMaxAttempts,
+      lockoutMinutes: env.auth.loginLockoutMinutes,
+    });
     throw new ApiError(401, "Email or password is incorrect.");
   }
 
+  await clearFailedLoginAttempts("customer", lookup.lookupIdentifier);
   return createSessionBundle(user, sessionMeta);
 };
 
@@ -703,6 +777,8 @@ const refreshAuthSession = async (refreshToken, sessionMeta) => {
     throw new ApiError(404, "User not found.");
   }
 
+  assertUserAccountIsActive(user);
+
   const nextBundle = await createSessionBundle(user, sessionMeta);
   await updateSession(session.id, {
     revokedAt: new Date(),
@@ -711,6 +787,29 @@ const refreshAuthSession = async (refreshToken, sessionMeta) => {
   });
 
   return nextBundle;
+};
+
+const getCurrentUserFromRefreshToken = async (refreshToken) => {
+  if (!refreshToken) {
+    throw new ApiError(401, "Refresh token is missing.");
+  }
+
+  const payload = verifyRefreshToken(refreshToken);
+  const session = await findSessionById(payload.sid);
+
+  if (!session || session.userId !== payload.sub || session.revokedAt) {
+    throw new ApiError(401, "Refresh token is invalid or expired.");
+  }
+
+  if (session.expiresAt.getTime() < Date.now()) {
+    throw new ApiError(401, "Refresh token is invalid or expired.");
+  }
+
+  if (session.tokenHash !== createSha256Hash(refreshToken)) {
+    throw new ApiError(401, "Refresh token is invalid or expired.");
+  }
+
+  return getCurrentUser(session.userId);
 };
 
 const logoutUser = async (refreshToken) => {
@@ -731,6 +830,7 @@ const getCurrentUser = async (userId) => {
   if (!user) {
     throw new ApiError(404, "User not found.");
   }
+  assertUserAccountIsActive(user);
   return sanitizeUser(user);
 };
 
@@ -740,6 +840,8 @@ const updateCurrentUserProfile = async (userId, payload) => {
   if (!user) {
     throw new ApiError(404, "User not found.");
   }
+
+  assertUserAccountIsActive(user);
 
   const nextProfile = validateProfileUpdatePayload(payload);
   const updatedUser = await updateUser(userId, nextProfile);
@@ -752,14 +854,17 @@ const requestPasswordReset = async (payload) => {
   const { otpIdentifier, user } = await resolveUserByIdentifier(identifier);
 
   if (!user) {
-    throw new ApiError(404, "No account found for this email or phone number.");
+    return {
+      message:
+        "If an account matches that email or phone number, a reset code will be sent.",
+    };
   }
 
   if (!user.email) {
-    throw new ApiError(
-      400,
-      "This account does not have an email address available for OTP delivery.",
-    );
+    return {
+      message:
+        "If an account matches that email or phone number, a reset code will be sent.",
+    };
   }
 
   const otp = await issueOtpForPurpose({
@@ -777,19 +882,18 @@ const requestPasswordReset = async (payload) => {
     expiresInMinutes: env.auth.otpExpiryMinutes,
   });
 
-  console.info(`[Auth OTP] Password reset code for ${otpIdentifier}: ${otp}`);
+  logOtpForDevelopment("Password reset", otpIdentifier, otp);
 
   return {
-    message: hasPasswordLogin
-      ? "Password reset OTP sent to your email."
-      : hasGoogleLogin
-        ? "OTP sent to your email. Verify it to set a password for this Google account."
-        : "OTP sent to your email.",
+    message:
+      "If an account matches that email or phone number, a reset code will be sent.",
     ...getDevOtpPayload(otp),
-    data: {
-      authProvider: user.authProvider,
-      authMethods: getUserAuthMethods(user),
-    },
+    data: hasPasswordLogin || hasGoogleLogin
+      ? {
+          authProvider: user.authProvider,
+          authMethods: getUserAuthMethods(user),
+        }
+      : undefined,
   };
 };
 
@@ -800,7 +904,7 @@ const verifyPasswordResetOtp = async (payload) => {
   const { otpIdentifier, user } = await resolveUserByIdentifier(identifier);
 
   if (!user) {
-    throw new ApiError(404, "No account found for this email or phone number.");
+    throw new ApiError(400, "OTP is invalid or expired.");
   }
 
   await assertOtpIsValid(
@@ -864,7 +968,9 @@ const resetPassword = async (payload) => {
 };
 
 module.exports = {
+  assertUserAccountIsActive,
   getCurrentUser,
+  getCurrentUserFromRefreshToken,
   loginManualUser,
   loginWithGoogle,
   logoutUser,

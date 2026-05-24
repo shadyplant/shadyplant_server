@@ -1,6 +1,7 @@
 const { env } = require("../config/env");
 const {
   getCurrentUser,
+  getCurrentUserFromRefreshToken,
   loginManualUser,
   loginWithGoogle,
   logoutUser,
@@ -86,6 +87,16 @@ const me = asyncHandler(async (req, res) => {
   });
 });
 
+const sessionUser = asyncHandler(async (req, res) => {
+  const refreshToken = req.cookies[env.auth.cookieName];
+  const user = await getCurrentUserFromRefreshToken(refreshToken);
+
+  res.status(200).json({
+    message: "Session user fetched successfully.",
+    data: { user },
+  });
+});
+
 const updateMe = asyncHandler(async (req, res) => {
   const user = await updateCurrentUserProfile(req.auth.userId, req.body);
   res.status(200).json({
@@ -118,6 +129,7 @@ module.exports = {
   login,
   logout,
   me,
+  sessionUser,
   refresh,
   register,
   verifyRegisterOtp,

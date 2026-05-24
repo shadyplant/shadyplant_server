@@ -4,11 +4,16 @@ const {
   createOrder,
   findOrderById,
   listOrdersByUserId,
+  updateOrder,
 } = require("../repositories/order.repository");
 const { ApiError } = require("../utils/apiError");
 const { generateId } = require("../utils/crypto");
 const { isValidPhoneNumber, isValidPostalCode } = require("../utils/validators");
 const { sendOrderStatusEmail } = require("../mailer");
+const {
+  PAYMENT_METHODS,
+  assertUserCanUsePaymentMethod,
+} = require("./user-account.service");
 
 const GRASS_PRICE_PER_SQFT = 12;
 const VEHICLES = {
@@ -34,16 +39,28 @@ const VEHICLES = {
 const PAYMENT_METHOD_LABELS = {
   cash_on_delivery: "Cash on delivery",
   online_payment: "Online payment",
+  emi: "EMI",
   bank_transfer: "Bank transfer",
 };
 const ALLOWED_CREATE_PAYMENT_METHODS = {
   cash_on_delivery: true,
   online_payment: true,
+  emi: true,
 };
 const PAYMENT_STATUS_LABELS = {
   pay_on_delivery: "Pay on delivery",
   paid: "Paid online",
   awaiting_confirmation: "Awaiting confirmation",
+  refunded: "Refunded",
+};
+const ORDER_CANCELLATION_REASONS = {
+  poor_plant_health: "Poor Plant Health",
+  extreme_weather_conditions: "Extreme Weather Conditions",
+  out_of_stock: "Out of Stock",
+  transit_safety_limit_unserviceable_location:
+    "Transit Safety Limit/Unserviceable Location",
+  payment_or_fraud_issue: "Payment or Fraud Issue",
+  pricing_error: "Pricing Error",
 };
 const RECOMMENDED_PRODUCTS = {
   lawn_food: {
@@ -67,10 +84,16 @@ const RECOMMENDED_PRODUCTS = {
 };
 const ORDER_STATUS_STEPS = [
   {
+    key: "placed",
+    title: "Order placed",
+    description: "Your order has been received and is waiting for admin confirmation.",
+    defaultEventMessage: "Order placed and waiting for confirmation.",
+  },
+  {
     key: "confirmed",
     title: "Order confirmed",
     description: "Your order has been confirmed and moved into fulfillment.",
-    defaultEventMessage: "Order placed",
+    defaultEventMessage: "Order confirmed by admin.",
   },
   {
     key: "shipped",
@@ -90,6 +113,18 @@ const ORDER_STATUS_STEPS = [
     description: "The order has been delivered successfully.",
     defaultEventMessage: "The order has been delivered successfully.",
   },
+  {
+    key: "cancelled",
+    title: "Cancelled",
+    description: "The order has been cancelled by the admin team.",
+    defaultEventMessage: "Order cancelled.",
+  },
+  {
+    key: "refunded",
+    title: "Refunded",
+    description: "A refund has been recorded for this order.",
+    defaultEventMessage: "Order refunded.",
+  },
 ];
 
 const ORDER_STATUS_KEYS = ORDER_STATUS_STEPS.map((step) => step.key);
@@ -97,7 +132,7 @@ const ORDER_STATUS_STEP_MAP = new Map(
   ORDER_STATUS_STEPS.map((step) => [step.key, step]),
 );
 const ORDER_STATUS_ALIASES = {
-  placed: "confirmed",
+  placed: "placed",
   confirmed: "confirmed",
   preparing: "confirmed",
   scheduled: "shipped",
@@ -105,7 +140,18 @@ const ORDER_STATUS_ALIASES = {
   shipped: "shipped",
   out_for_delivery: "out_for_delivery",
   delivered: "delivered",
+  cancelled: "cancelled",
+  canceled: "cancelled",
+  refunded: "refunded",
 };
+const REFUND_REQUEST_STATUSES = {
+  pendingSubmission: "pending_submission",
+  submitted: "submitted",
+  resubmitRequired: "resubmit_required",
+  refunded: "refunded",
+};
+
+const REFUND_IFSC_PATTERN = /^[A-Z]{4}0[A-Z0-9]{6}$/;
 
 const normalizeDeliveryAddress = (deliveryAddress = {}) => ({
   line1: String(deliveryAddress.line1 || "").trim(),
@@ -116,6 +162,114 @@ const normalizeDeliveryAddress = (deliveryAddress = {}) => ({
   landmark: String(deliveryAddress.landmark || "").trim(),
   notes: String(deliveryAddress.notes || "").trim(),
 });
+
+const normalizeRefundRequestStatus = (value) => {
+  const normalizedValue = String(value || "").trim().toLowerCase();
+
+  if (
+    Object.values(REFUND_REQUEST_STATUSES).includes(normalizedValue)
+  ) {
+    return normalizedValue;
+  }
+
+  return null;
+};
+
+const normalizeRefundAccountDetails = (details = {}) => ({
+  accountHolderName: String(
+    details.accountHolderName || details.nameOnAccount || details.accountName || "",
+  ).trim(),
+  bankName: String(details.bankName || "").trim(),
+  accountNumber: String(details.accountNumber || "").replace(/\s+/g, "").trim(),
+  ifscCode: String(details.ifscCode || details.ifsc || "").trim().toUpperCase(),
+});
+
+const hasRefundAccountDetails = (details = {}) =>
+  Boolean(
+    details.accountHolderName &&
+      details.bankName &&
+      details.accountNumber &&
+      details.ifscCode,
+  );
+
+const validateRefundAccountDetails = (payload = {}) => {
+  const normalizedDetails = normalizeRefundAccountDetails(payload);
+
+  if (!normalizedDetails.accountHolderName) {
+    throw new ApiError(400, "Name as on account is required.");
+  }
+
+  if (!normalizedDetails.bankName) {
+    throw new ApiError(400, "Bank name is required.");
+  }
+
+  if (!/^\d{6,24}$/.test(normalizedDetails.accountNumber)) {
+    throw new ApiError(400, "Account number format is invalid.");
+  }
+
+  if (!REFUND_IFSC_PATTERN.test(normalizedDetails.ifscCode)) {
+    throw new ApiError(400, "IFSC code format is invalid.");
+  }
+
+  return normalizedDetails;
+};
+
+const buildOrderRefundRequest = (order = {}) => {
+  const currentStatus = resolveOrderStatus(order);
+  const rawRefundRequest =
+    order.paymentDetails &&
+    typeof order.paymentDetails === "object" &&
+    order.paymentDetails.refundRequest &&
+    typeof order.paymentDetails.refundRequest === "object"
+      ? order.paymentDetails.refundRequest
+      : {};
+  const accountDetails = normalizeRefundAccountDetails(
+    rawRefundRequest.accountDetails || {},
+  );
+  const statusFromPayload = normalizeRefundRequestStatus(rawRefundRequest.status);
+  const hasDetails = hasRefundAccountDetails(accountDetails);
+
+  let status = statusFromPayload;
+
+  if (!status) {
+    if (currentStatus === "refunded") {
+      status = REFUND_REQUEST_STATUSES.refunded;
+    } else if (currentStatus === "cancelled" && hasDetails) {
+      status = REFUND_REQUEST_STATUSES.submitted;
+    } else if (currentStatus === "cancelled") {
+      status = REFUND_REQUEST_STATUSES.pendingSubmission;
+    } else {
+      status = null;
+    }
+  }
+
+  return {
+    status,
+    accountDetails: hasDetails ? accountDetails : null,
+    adminNote: String(rawRefundRequest.adminNote || "").trim(),
+    submittedAt: String(rawRefundRequest.submittedAt || "").trim() || null,
+    updatedAt: String(rawRefundRequest.updatedAt || "").trim() || null,
+    resubmitRequestedAt:
+      String(rawRefundRequest.resubmitRequestedAt || "").trim() || null,
+    refundedAt:
+      String(rawRefundRequest.refundedAt || order.refundedAt || "").trim() || null,
+  };
+};
+
+const buildPaymentDetailsWithRefundRequest = (order = {}, refundRequest = null) => {
+  const nextPaymentDetails =
+    order.paymentDetails && typeof order.paymentDetails === "object"
+      ? { ...order.paymentDetails }
+      : {};
+
+  if (refundRequest) {
+    nextPaymentDetails.refundRequest = refundRequest;
+  } else {
+    delete nextPaymentDetails.refundRequest;
+  }
+
+  return nextPaymentDetails;
+};
 
 const buildOrderItemSummary = (order = {}) => {
   const orderItems = Array.isArray(order.orderItems) ? order.orderItems : [];
@@ -292,6 +446,7 @@ const prepareOrderForUser = async (userId, payload) => {
   }
 
   const nextOrder = validateCreateOrderPayload(payload);
+  assertUserCanUsePaymentMethod(user, nextOrder.paymentMethod);
   const materialSubtotal = nextOrder.quantitySqft * GRASS_PRICE_PER_SQFT;
   const shippingSubtotal = Math.round(nextOrder.distanceKm * nextOrder.vehicle.rate);
   const recommendedSubtotal = nextOrder.recommendedItems.reduce(
@@ -490,7 +645,7 @@ const ensureTrackingStatusEntry = (
 };
 
 const buildInitialTrackingTimeline = (timestamp = new Date().toISOString()) =>
-  ensureTrackingStatusEntry([], "confirmed", timestamp);
+  ensureTrackingStatusEntry([], "placed", timestamp);
 
 const buildTrackingTimeline = (order) => {
   const currentStatus = resolveOrderStatus(order);
@@ -527,6 +682,7 @@ const buildTrackingTimeline = (order) => {
 
 const serializeOrder = (order) => {
   const currentStatus = resolveOrderStatus(order);
+  const refundRequest = buildOrderRefundRequest(order);
 
   return {
     id: order.id,
@@ -548,7 +704,17 @@ const serializeOrder = (order) => {
     paymentStatus: order.paymentStatus,
     paymentStatusLabel: PAYMENT_STATUS_LABELS[order.paymentStatus],
     paymentDetails: order.paymentDetails || {},
+    refundAccountDetails: refundRequest.accountDetails,
+    refundRequestStatus: refundRequest.status,
+    refundRequestNote: refundRequest.adminNote,
+    refundSubmittedAt: refundRequest.submittedAt,
+    refundResubmitRequestedAt: refundRequest.resubmitRequestedAt,
     currentStatus,
+    cancellationReason: order.cancellationReason || "",
+    cancellationNote: order.cancellationNote || "",
+    cancelledAt: order.cancelledAt || null,
+    refundReason: order.refundReason || "",
+    refundedAt: order.refundedAt || null,
     trackingTimeline: buildTrackingTimeline(order),
     recommendedItems: order.recommendedItems || [],
     pricing: {
@@ -564,7 +730,7 @@ const createPreparedOrder = async (preparedOrder, overrides = {}) => {
   const order = await createOrder({
     ...preparedOrder,
     paymentStatus: "pay_on_delivery",
-    currentStatus: "confirmed",
+    currentStatus: "placed",
     trackingTimeline: buildInitialTrackingTimeline(),
     ...overrides,
   });
@@ -577,10 +743,10 @@ const createPreparedOrder = async (preparedOrder, overrides = {}) => {
 const createUserOrder = async (userId, payload) => {
   const preparedOrder = await prepareOrderForUser(userId, payload);
 
-  if (preparedOrder.paymentMethod !== "cash_on_delivery") {
+  if (preparedOrder.paymentMethod !== PAYMENT_METHODS.cashOnDelivery) {
       throw new ApiError(
         400,
-        "Online payment orders must be completed through Cashfree checkout first.",
+        "Online payment orders must be completed through the payment gateway checkout first.",
       );
   }
 
@@ -604,7 +770,49 @@ const getUserOrder = async (userId, orderId) => {
   return serializeOrder(order);
 };
 
+const submitUserRefundAccountDetails = async (userId, orderId, payload = {}) => {
+  const order = await findOrderById(orderId);
+
+  if (!order || order.userId !== userId) {
+    throw new ApiError(404, "Order not found.");
+  }
+
+  const currentStatus = resolveOrderStatus(order);
+
+  if (currentStatus !== "cancelled") {
+    throw new ApiError(
+      400,
+      "Refund account details can only be submitted after an order is cancelled.",
+    );
+  }
+
+  const currentRefundRequest = buildOrderRefundRequest(order);
+
+  if (currentRefundRequest.status === REFUND_REQUEST_STATUSES.refunded) {
+    throw new ApiError(400, "This order has already been refunded.");
+  }
+
+  const accountDetails = validateRefundAccountDetails(payload);
+  const nowIso = new Date().toISOString();
+  const nextRefundRequest = {
+    ...currentRefundRequest,
+    status: REFUND_REQUEST_STATUSES.submitted,
+    accountDetails,
+    adminNote: "",
+    submittedAt: currentRefundRequest.submittedAt || nowIso,
+    updatedAt: nowIso,
+    resubmitRequestedAt: null,
+  };
+
+  const updatedOrder = await updateOrder(orderId, {
+    paymentDetails: buildPaymentDetailsWithRefundRequest(order, nextRefundRequest),
+  });
+
+  return serializeOrder(updatedOrder);
+};
+
 module.exports = {
+  ORDER_CANCELLATION_REASONS,
   ORDER_STATUS_KEYS,
   appendTrackingEntryToStatus,
   buildInitialTrackingTimeline,
@@ -616,6 +824,10 @@ module.exports = {
   createUserOrder,
   getUserOrder,
   listUserOrders,
+  submitUserRefundAccountDetails,
   serializeOrder,
   notifyOrderPrimaryStatus,
+  buildOrderRefundRequest,
+  buildPaymentDetailsWithRefundRequest,
+  REFUND_REQUEST_STATUSES,
 };

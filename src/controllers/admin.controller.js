@@ -1,28 +1,47 @@
 const {
+  addItemToAdminCustomerCart,
+  adjustAdminProductStock,
+  createAdminCustomerCartPaymentCheckout,
+  createAdminCustomer,
+  createAdminCoupon,
   createAdminProduct,
   createAdminService,
   createAdminStaffAccount,
+  deleteAdminCoupon,
   deleteAdminProduct,
   deleteAdminReview,
   deleteAdminService,
   deleteAdminStaffAccount,
   getAdminCustomer,
+  getAdminCustomerCart,
+  getAdminCustomerCartPaymentAttempt,
   getAdminOrder,
+  getAdminPaymentGatewaySettings,
   getAdminProduct,
+  getAdminProductStockSnapshot,
   getAdminSetupStatus,
   getAdminService,
   getCurrentStaffAccount,
+  listAdminCoupons,
   listAdminCustomers,
   listAdminOrders,
+  listAdminProductStockAdjustmentLogs,
   listAdminProducts,
   listAdminReviews,
+  listAdminSalesReport,
   listAdminServices,
   listAdminStaffAccounts,
   listAdminTransactions,
   loginStaffAccount,
+  previewAdminCustomerCartCheckout,
+  removeAdminCustomerCartItem,
   setupInitialAdminOwner,
+  syncAdminProductsFromSheet,
   updateAdminCustomer,
+  updateAdminCustomerCartItem,
+  updateAdminCoupon,
   updateAdminOrder,
+  updateAdminPaymentGatewaySettings,
   updateAdminProduct,
   updateAdminReview,
   updateAdminService,
@@ -35,14 +54,30 @@ const {
   listAdminHomeCategoryItems,
   updateAdminHomeCategoryItem,
 } = require("../services/home-category.service");
+const {
+  createAdminHomeSliderBanner,
+  deleteAdminHomeSliderBanner,
+  getAdminHomeSliderBanner,
+  listAdminHomeSliderBanners,
+  updateAdminHomeSliderBanner,
+} = require("../services/home-slider-banner.service");
+const { cacheProductSyncResponse } = require("../middleware/product-sync.middleware");
 const { asyncHandler } = require("../utils/asyncHandler");
+const {
+  attachStaffAccessCookie,
+  clearStaffAccessCookie,
+} = require("../utils/cookies");
 
 const loginAdmin = asyncHandler(async (req, res) => {
   const payload = await loginStaffAccount(req.body);
+  attachStaffAccessCookie(res, payload.accessToken);
 
   res.status(200).json({
     message: "Admin login successful.",
-    data: payload,
+    data: {
+      staff: payload.staff,
+      expiresIn: payload.expiresIn,
+    },
   });
 });
 
@@ -57,10 +92,23 @@ const getAdminSetupStatusController = asyncHandler(async (req, res) => {
 
 const setupInitialAdminOwnerController = asyncHandler(async (req, res) => {
   const payload = await setupInitialAdminOwner(req.body);
+  attachStaffAccessCookie(res, payload.accessToken);
 
   res.status(201).json({
     message: "Initial admin owner created successfully.",
-    data: payload,
+    data: {
+      staff: payload.staff,
+      expiresIn: payload.expiresIn,
+    },
+  });
+});
+
+const logoutAdmin = asyncHandler(async (_req, res) => {
+  clearStaffAccessCookie(res);
+
+  res.status(200).json({
+    message: "Admin logout successful.",
+    data: { success: true },
   });
 });
 
@@ -70,6 +118,27 @@ const getAdminMe = asyncHandler(async (req, res) => {
   res.status(200).json({
     message: "Staff account fetched successfully.",
     data: { staff },
+  });
+});
+
+const getPaymentGatewaySettingsForAdmin = asyncHandler(async (req, res) => {
+  const settings = await getAdminPaymentGatewaySettings();
+
+  res.status(200).json({
+    message: "Payment gateway settings fetched successfully.",
+    data: { settings },
+  });
+});
+
+const updatePaymentGatewaySettingsForAdmin = asyncHandler(async (req, res) => {
+  const settings = await updateAdminPaymentGatewaySettings(
+    req.staff.staffAccountId,
+    req.body,
+  );
+
+  res.status(200).json({
+    message: "Payment gateway settings updated successfully.",
+    data: { settings },
   });
 });
 
@@ -128,6 +197,61 @@ const deleteHomeCategoryForAdmin = asyncHandler(async (req, res) => {
   });
 });
 
+const listHomeSliderBannersForAdmin = asyncHandler(async (req, res) => {
+  const items = await listAdminHomeSliderBanners(req.staff.organizationId);
+
+  res.status(200).json({
+    message: "Admin home slider banners fetched successfully.",
+    data: { items },
+  });
+});
+
+const getHomeSliderBannerForAdmin = asyncHandler(async (req, res) => {
+  const item = await getAdminHomeSliderBanner(
+    req.params.itemId,
+    req.staff.organizationId,
+  );
+
+  res.status(200).json({
+    message: "Admin home slider banner fetched successfully.",
+    data: { item },
+  });
+});
+
+const createHomeSliderBannerForAdmin = asyncHandler(async (req, res) => {
+  const item = await createAdminHomeSliderBanner(req.staff.organizationId, req.body);
+
+  res.status(201).json({
+    message: "Admin home slider banner created successfully.",
+    data: { item },
+  });
+});
+
+const updateHomeSliderBannerForAdmin = asyncHandler(async (req, res) => {
+  const item = await updateAdminHomeSliderBanner(
+    req.params.itemId,
+    req.staff.organizationId,
+    req.body,
+  );
+
+  res.status(200).json({
+    message: "Admin home slider banner updated successfully.",
+    data: { item },
+  });
+});
+
+const deleteHomeSliderBannerForAdmin = asyncHandler(async (req, res) => {
+  const item = await deleteAdminHomeSliderBanner(
+    req.params.itemId,
+    req.staff.organizationId,
+  );
+
+  res.status(200).json({
+    message: "Admin home slider banner deleted successfully.",
+    data: { item },
+  });
+});
+
 const listProductsForAdmin = asyncHandler(async (req, res) => {
   const products = await listAdminProducts();
   res.status(200).json({
@@ -160,11 +284,59 @@ const updateProductForAdmin = asyncHandler(async (req, res) => {
   });
 });
 
+const adjustProductStockForAdmin = asyncHandler(async (req, res) => {
+  const result = await adjustAdminProductStock(req.params.productId, req.body, {
+    staffAccountId: req.staff.staffAccountId,
+    email: req.staff.email,
+    role: req.staff.role,
+  });
+  res.status(200).json({
+    message: "Product stock adjusted successfully.",
+    data: result,
+  });
+});
+
+const listProductStockAdjustmentLogsForAdmin = asyncHandler(async (req, res) => {
+  const result = await listAdminProductStockAdjustmentLogs(
+    req.params.productId,
+    req.query,
+  );
+  res.status(200).json({
+    message: "Product stock logs fetched successfully.",
+    data: result,
+  });
+});
+
 const deleteProductForAdmin = asyncHandler(async (req, res) => {
   const product = await deleteAdminProduct(req.params.productId);
   res.status(200).json({
     message: "Admin product deleted successfully.",
     data: { product },
+  });
+});
+
+const syncProductsForAdmin = asyncHandler(async (req, res) => {
+  const dryRun =
+    String(req.query.dryRun || req.body?.dryRun || "")
+      .trim()
+      .toLowerCase() === "true";
+  const result = await syncAdminProductsFromSheet(req.productSyncPayload, {
+    dryRun,
+    context: req.productSyncContext,
+  });
+  await cacheProductSyncResponse(req.productSyncContext, result);
+
+  res.status(200).json(result);
+});
+
+const getProductStockSnapshotForAdmin = asyncHandler(async (req, res) => {
+  const snapshot = await getAdminProductStockSnapshot(req.body);
+
+  res.status(200).json({
+    success: true,
+    requestId: req.productSyncContext?.requestId || null,
+    ...snapshot,
+    fetchedAt: new Date().toISOString(),
   });
 });
 
@@ -227,7 +399,10 @@ const listReviewsForAdmin = asyncHandler(async (req, res) => {
 });
 
 const updateReviewForAdmin = asyncHandler(async (req, res) => {
-  const review = await updateAdminReview(req.params.reviewId, req.body);
+  const review = await updateAdminReview(req.params.reviewId, req.body, {
+    staffAccountId: req.staff.staffAccountId,
+    email: req.staff.email,
+  });
   res.status(200).json({
     message: "Admin review updated successfully.",
     data: { review },
@@ -258,6 +433,46 @@ const listTransactionsForAdmin = asyncHandler(async (req, res) => {
   });
 });
 
+const listSalesReportForAdmin = asyncHandler(async (req, res) => {
+  const payload = await listAdminSalesReport();
+  res.status(200).json({
+    message: "Admin sales report fetched successfully.",
+    data: payload,
+  });
+});
+
+const listCouponsForAdmin = asyncHandler(async (req, res) => {
+  const coupons = await listAdminCoupons();
+  res.status(200).json({
+    message: "Admin coupons fetched successfully.",
+    data: { coupons },
+  });
+});
+
+const createCouponForAdmin = asyncHandler(async (req, res) => {
+  const coupon = await createAdminCoupon(req.staff.staffAccountId, req.body);
+  res.status(201).json({
+    message: "Coupon created successfully.",
+    data: { coupon },
+  });
+});
+
+const updateCouponForAdmin = asyncHandler(async (req, res) => {
+  const coupon = await updateAdminCoupon(req.params.couponId, req.body);
+  res.status(200).json({
+    message: "Coupon updated successfully.",
+    data: { coupon },
+  });
+});
+
+const deleteCouponForAdmin = asyncHandler(async (req, res) => {
+  const coupon = await deleteAdminCoupon(req.params.couponId);
+  res.status(200).json({
+    message: "Coupon deleted successfully.",
+    data: { coupon },
+  });
+});
+
 const getOrderForAdmin = asyncHandler(async (req, res) => {
   const order = await getAdminOrder(req.params.orderId);
   res.status(200).json({
@@ -282,11 +497,91 @@ const listCustomersForAdmin = asyncHandler(async (req, res) => {
   });
 });
 
+const createCustomerForAdmin = asyncHandler(async (req, res) => {
+  const customer = await createAdminCustomer(req.body);
+  res.status(201).json({
+    message: "Admin customer created successfully.",
+    data: { customer },
+  });
+});
+
 const getCustomerForAdmin = asyncHandler(async (req, res) => {
   const customer = await getAdminCustomer(req.params.customerId);
   res.status(200).json({
     message: "Admin customer fetched successfully.",
     data: { customer },
+  });
+});
+
+const getCustomerCartForAdmin = asyncHandler(async (req, res) => {
+  const result = await getAdminCustomerCart(req.params.customerId);
+  res.status(200).json({
+    message: "Admin customer cart fetched successfully.",
+    data: result,
+  });
+});
+
+const previewCustomerCartCheckoutForAdmin = asyncHandler(async (req, res) => {
+  const result = await previewAdminCustomerCartCheckout(
+    req.params.customerId,
+    req.body,
+  );
+  res.status(200).json({
+    message: "Admin customer checkout preview generated successfully.",
+    data: result,
+  });
+});
+
+const createCustomerCartPaymentCheckoutForAdmin = asyncHandler(async (req, res) => {
+  const result = await createAdminCustomerCartPaymentCheckout(
+    req.params.customerId,
+    req.body,
+  );
+  res.status(201).json({
+    message: "Admin customer payment transaction created successfully.",
+    data: result,
+  });
+});
+
+const getCustomerCartPaymentAttemptForAdmin = asyncHandler(async (req, res) => {
+  const result = await getAdminCustomerCartPaymentAttempt(
+    req.params.customerId,
+    req.params.paymentAttemptId,
+  );
+  res.status(200).json({
+    message: "Admin customer payment transaction fetched successfully.",
+    data: result,
+  });
+});
+
+const addCustomerCartItemForAdmin = asyncHandler(async (req, res) => {
+  const result = await addItemToAdminCustomerCart(req.params.customerId, req.body);
+  res.status(200).json({
+    message: "Admin customer cart updated successfully.",
+    data: result,
+  });
+});
+
+const updateCustomerCartItemForAdmin = asyncHandler(async (req, res) => {
+  const result = await updateAdminCustomerCartItem(
+    req.params.customerId,
+    req.params.itemId,
+    req.body,
+  );
+  res.status(200).json({
+    message: "Admin customer cart item updated successfully.",
+    data: result,
+  });
+});
+
+const removeCustomerCartItemForAdmin = asyncHandler(async (req, res) => {
+  const result = await removeAdminCustomerCartItem(
+    req.params.customerId,
+    req.params.itemId,
+  );
+  res.status(200).json({
+    message: "Admin customer cart item removed successfully.",
+    data: result,
   });
 });
 
@@ -338,35 +633,60 @@ const deleteStaffForAdmin = asyncHandler(async (req, res) => {
 });
 
 module.exports = {
+  addCustomerCartItemForAdmin,
+  adjustProductStockForAdmin,
+  listProductStockAdjustmentLogsForAdmin,
+  createCustomerForAdmin,
+  createCouponForAdmin,
   createProductForAdmin,
   createServiceForAdmin,
   createHomeCategoryForAdmin,
+  createHomeSliderBannerForAdmin,
   createStaffForAdmin,
+  deleteCouponForAdmin,
   deleteProductForAdmin,
   deleteHomeCategoryForAdmin,
+  deleteHomeSliderBannerForAdmin,
   deleteReviewForAdmin,
   deleteServiceForAdmin,
   deleteStaffForAdmin,
   getAdminMe,
   getAdminSetupStatusController,
   getCustomerForAdmin,
+  getCustomerCartForAdmin,
+  getCustomerCartPaymentAttemptForAdmin,
+  getPaymentGatewaySettingsForAdmin,
   getHomeCategoryForAdmin,
+  getHomeSliderBannerForAdmin,
   getOrderForAdmin,
   getProductForAdmin,
+  getProductStockSnapshotForAdmin,
   getServiceForAdmin,
   listCustomersForAdmin,
+  listCouponsForAdmin,
   listHomeCategoriesForAdmin,
+  listHomeSliderBannersForAdmin,
   listOrdersForAdmin,
   listProductsForAdmin,
   listReviewsForAdmin,
+  listSalesReportForAdmin,
   listServicesForAdmin,
   listStaffForAdmin,
   listTransactionsForAdmin,
   loginAdmin,
+  logoutAdmin,
+  previewCustomerCartCheckoutForAdmin,
+  removeCustomerCartItemForAdmin,
   setupInitialAdminOwnerController,
+  syncProductsForAdmin,
+  createCustomerCartPaymentCheckoutForAdmin,
   updateCustomerForAdmin,
+  updateCustomerCartItemForAdmin,
+  updateCouponForAdmin,
   updateHomeCategoryForAdmin,
+  updateHomeSliderBannerForAdmin,
   updateOrderForAdmin,
+  updatePaymentGatewaySettingsForAdmin,
   updateProductForAdmin,
   updateReviewForAdmin,
   updateServiceForAdmin,

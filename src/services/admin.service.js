@@ -1,14 +1,30 @@
 const {
+  createCouponCode,
+  deleteCouponCode,
+  findCouponCodeByCode,
+  findCouponCodeById,
+  listCouponCodes,
+  updateCouponCode,
+} = require("../repositories/coupon.repository");
+const {
+  adjustProductStock,
   createProduct,
   deleteProduct,
   findProductById,
+  findProductsBySkuReferences,
+  findProductsBySkus,
   listProducts,
+  setProductStock,
   updateProduct,
 } = require("../repositories/product.repository");
 const {
   countRequestedProductStockAlertsByProductIds,
   listRequestedProductStockAlertsByProductId,
 } = require("../repositories/product-stock-alert.repository");
+const {
+  createProductStockAdjustmentLog,
+  listProductStockAdjustmentLogs,
+} = require("../repositories/product-stock-adjustment-log.repository");
 const {
   REVIEW_STATUSES,
   deleteProductReview,
@@ -36,7 +52,15 @@ const {
   updateStaffAccount,
 } = require("../repositories/staff.repository");
 const {
+  clearFailedLoginAttempts,
+  getLockoutState,
+  recordFailedLoginAttempt,
+} = require("../repositories/login-attempt.repository");
+const {
+  createUser,
   findUserById,
+  findUserByEmail,
+  findUserByPhone,
   listUsers,
   updateUser,
 } = require("../repositories/user.repository");
@@ -45,21 +69,68 @@ const {
   listAllOrders,
   updateOrder,
 } = require("../repositories/order.repository");
-const { listAllPaymentAttempts } = require("../repositories/payment.repository");
+const {
+  findPaymentAttemptById,
+  listAllPaymentAttempts,
+} = require("../repositories/payment.repository");
 const { env } = require("../config/env");
 const { ApiError } = require("../utils/apiError");
 const { comparePassword, hashPassword, validatePasswordStrength } = require("../utils/password");
 const { isValidEmail, isValidPhoneNumber, normalizeEmail } = require("../utils/validators");
 const {
+  addCartItem,
+  getUserCart,
+  removeCartItem,
+  updateCartItemQuantity,
+} = require("./cart.service");
+const {
+  getPaymentGatewayAdminSettings,
+  updateActivePaymentGatewayProvider,
+} = require("./payment-gateway-settings.service");
+const {
+  createCartPaymentCheckout,
+  previewCartCheckout,
+} = require("./checkout.service");
+const {
+  ORDER_CANCELLATION_REASONS,
   ORDER_STATUS_KEYS,
+  REFUND_REQUEST_STATUSES,
   appendTrackingEntryToStatus,
+  buildOrderRefundRequest,
+  buildPaymentDetailsWithRefundRequest,
   ensureTrackingStatusEntry,
   notifyOrderPrimaryStatus,
   normalizeOrderCurrentStatus,
   normalizeStoredTrackingTimeline,
   serializeOrder,
 } = require("./order.service");
+const { syncProductsFromSheet } = require("./product-sync.service");
+const {
+  CUSTOMER_CATEGORIES,
+  DEFAULT_PAYMENT_ACCESS,
+  normalizeUserPaymentAccess,
+  PAYMENT_METHODS,
+  USER_ACCOUNT_STATUSES,
+  normalizeCustomerCategory,
+  normalizeUserAccountStatus,
+  resolveUserPaymentAccess,
+  resolveEffectiveUserAccountStatus,
+} = require("./user-account.service");
+const {
+  COUPON_STATUSES,
+  COUPON_TYPES,
+  COUPON_USAGE_MODES,
+  calculateCouponApplication,
+  generateCouponCode,
+  normalizeCouponCode,
+  normalizeCouponStatus,
+  normalizeCouponType,
+  normalizeDiscountPercent,
+  normalizeWholeAmount,
+  resolveCouponEffectiveStatus,
+} = require("./coupon.service");
 const { seedHomeCategoryItemsForOrganization } = require("./home-category.service");
+const { seedHomeSliderBannersForOrganization } = require("./home-slider-banner.service");
 const { signStaffAccessToken } = require("./token.service");
 
 const STAFF_ROLES = ["owner", "admin", "manager", "catalog", "operations", "support"];
@@ -75,6 +146,7 @@ const STAFF_ROLE_RANK = {
 const PAYMENT_METHOD_LABELS = {
   cash_on_delivery: "Cash on delivery",
   online_payment: "Online payment",
+  emi: "EMI",
   bank_transfer: "Bank transfer",
 };
 const ORDER_PAYMENT_STATUS_LABELS = {
@@ -85,8 +157,15 @@ const ORDER_PAYMENT_STATUS_LABELS = {
 const PAYMENT_ATTEMPT_STATUS_LABELS = {
   created: "Draft created",
   checkout_ready: "Checkout ready",
+  processing: "Payment processing",
   completed: "Payment verified",
   failed: "Payment failed",
+};
+const SAMPLE_COUPON_PRODUCT_TOTAL = 2000;
+const SAMPLE_COUPON_DELIVERY_CHARGE = 250;
+const STOCK_ADJUSTMENT_REASON_RULES = {
+  add: new Set(["received", "audit_found", "return_restock", "manual_correction"]),
+  adjust: new Set(["audit_correction", "damaged", "expired", "shrinkage", "manual_correction"]),
 };
 
 const slugifyValue = (value) =>
@@ -102,6 +181,15 @@ const normalizeStringArray = (value) =>
     : [];
 
 const normalizeString = (value) => String(value || "").trim();
+
+const getAccountLockoutMessage = (retryAfterSeconds) => {
+  const retryAfterMinutes = Math.max(
+    1,
+    Math.ceil(Number(retryAfterSeconds || 0) / 60),
+  );
+
+  return `Too many failed login attempts. Try again in ${retryAfterMinutes} minute${retryAfterMinutes === 1 ? "" : "s"}.`;
+};
 
 const resolveCurrency = (...values) => {
   for (const value of values) {
@@ -157,18 +245,130 @@ const sanitizeStaffAccount = (staffAccount, organization = null) => ({
     : undefined,
 });
 
-const sanitizeCustomer = (user) => ({
-  id: user.id,
-  fullName: user.fullName,
-  phoneNumber: user.phoneNumber,
-  email: user.email,
-  authProvider: user.authProvider,
-  profileImage: user.profileImage,
-  isVerified: Boolean(user.isVerified),
-  deliveryAddress: user.deliveryAddress || {},
-  billingDetails: user.billingDetails || {},
-  createdAt: user.createdAt,
-  updatedAt: user.updatedAt,
+const sanitizeCustomer = (user) => {
+  const accountStatus = resolveEffectiveUserAccountStatus(user);
+
+  return {
+    id: user.id,
+    fullName: user.fullName,
+    phoneNumber: user.phoneNumber,
+    email: user.email,
+    authProvider: user.authProvider,
+    profileImage: user.profileImage,
+    isVerified: Boolean(user.isVerified),
+    isVip: Boolean(user.isVip),
+    paymentAccess: resolveUserPaymentAccess(user),
+    customerCategory: normalizeCustomerCategory(user.customerCategory),
+    accountStatus,
+    bannedUntil:
+      accountStatus === USER_ACCOUNT_STATUSES.bannedTemporary
+        ? user.bannedUntil || null
+        : null,
+    banReason: String(user.banReason || "").trim(),
+    deliveryAddress: user.deliveryAddress || {},
+    billingDetails: user.billingDetails || {},
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+  };
+};
+
+const normalizeAdminCheckoutLocation = (value = {}) => ({
+  lat: Number(value?.lat),
+  lng: Number(value?.lng),
+});
+
+const buildAdminCheckoutAddressFromCustomer = (customer = {}) => ({
+  formattedAddress: String(customer.deliveryAddress?.formattedAddress || "").trim(),
+  line1: String(customer.deliveryAddress?.line1 || "").trim(),
+  line2: String(customer.deliveryAddress?.line2 || "").trim(),
+  city: String(customer.deliveryAddress?.city || "").trim(),
+  state: String(customer.deliveryAddress?.state || "").trim(),
+  postalCode: String(customer.deliveryAddress?.postalCode || "").trim(),
+  landmark: String(customer.deliveryAddress?.landmark || "").trim(),
+  notes: String(customer.deliveryAddress?.notes || "").trim(),
+});
+
+const buildAdminCheckoutBillingDetails = (
+  customer = {},
+  deliveryAddress = {},
+  overrides = {},
+) => {
+  const customerBilling = customer.billingDetails || {};
+
+  return {
+    name:
+      normalizeString(overrides.name) ||
+      normalizeString(customerBilling.name) ||
+      normalizeString(customer.fullName) ||
+      "Customer",
+    contact:
+      normalizeString(overrides.contact) ||
+      normalizeString(customerBilling.contact) ||
+      normalizeString(customer.phoneNumber),
+    email: normalizeString(overrides.email) || normalizeString(customer.email),
+    address:
+      normalizeString(overrides.address) ||
+      normalizeString(customerBilling.address) ||
+      normalizeString(deliveryAddress.line1) ||
+      normalizeString(deliveryAddress.formattedAddress),
+    city:
+      normalizeString(overrides.city) ||
+      normalizeString(customerBilling.city) ||
+      normalizeString(deliveryAddress.city),
+    state:
+      normalizeString(overrides.state) ||
+      normalizeString(customerBilling.state) ||
+      normalizeString(deliveryAddress.state),
+    gstin: normalizeString(overrides.gstin) || normalizeString(customerBilling.gstin),
+  };
+};
+
+const normalizeAdminCustomerCartCheckoutPayload = (customer = {}, payload = {}) => {
+  const defaultDeliveryAddress = buildAdminCheckoutAddressFromCustomer(customer);
+  const nextDeliveryAddress =
+    payload.deliveryAddress && typeof payload.deliveryAddress === "object"
+      ? {
+          ...defaultDeliveryAddress,
+          ...payload.deliveryAddress,
+        }
+      : defaultDeliveryAddress;
+
+  return {
+    deliveryAddress: nextDeliveryAddress,
+    deliveryLocation: normalizeAdminCheckoutLocation(payload.deliveryLocation || {}),
+    billingDetails: buildAdminCheckoutBillingDetails(
+      customer,
+      nextDeliveryAddress,
+      payload.billingDetails && typeof payload.billingDetails === "object"
+        ? payload.billingDetails
+        : {},
+    ),
+    couponCode: normalizeString(payload.couponCode).toUpperCase(),
+    paymentMethod: normalizeString(payload.paymentMethod) || PAYMENT_METHODS.onlinePayment,
+  };
+};
+
+const serializeAdminPaymentAttempt = (paymentAttempt) => ({
+  id: paymentAttempt.id,
+  paymentAttemptId: paymentAttempt.id,
+  status: paymentAttempt.status,
+  statusLabel:
+    PAYMENT_ATTEMPT_STATUS_LABELS[paymentAttempt.status] || "Payment update pending",
+  orderId: paymentAttempt.orderId || null,
+  amount: resolveAmount(paymentAttempt.amount),
+  currency: resolveCurrency(paymentAttempt.currency, "INR"),
+  paymentMethod: paymentAttempt.paymentMethod,
+  paymentMethodLabel:
+    PAYMENT_METHOD_LABELS[paymentAttempt.paymentMethod] || "Payment",
+  failureReason: paymentAttempt.failureReason || "",
+  provider: normalizeString(paymentAttempt.gateway?.provider) || null,
+  merchantOrderId:
+    normalizeString(paymentAttempt.gateway?.merchantOrderId) || paymentAttempt.id,
+  gatewayOrderId: normalizeString(paymentAttempt.gateway?.gatewayOrderId) || null,
+  redirectUrl: normalizeString(paymentAttempt.gateway?.redirectUrl) || "",
+  paymentSessionId: normalizeString(paymentAttempt.gateway?.paymentSessionId) || "",
+  createdAt: paymentAttempt.createdAt,
+  updatedAt: paymentAttempt.updatedAt,
 });
 
 const enrichAdminProductWithStockAlerts = async (
@@ -242,13 +442,19 @@ const buildOrderTransaction = (order, paymentAttempt = null) => {
       normalizeString(paymentAttempt?.gateway?.provider) ||
       null,
     gatewayOrderId:
+      normalizeString(paymentDetails.gatewayOrderId) ||
+      normalizeString(paymentDetails.merchantOrderId) ||
       normalizeString(paymentDetails.cashfreeOrderId) ||
       normalizeString(paymentDetails.razorpayOrderId) ||
+      normalizeString(paymentAttempt?.gateway?.gatewayOrderId) ||
+      normalizeString(paymentAttempt?.gateway?.merchantOrderId) ||
       normalizeString(paymentAttempt?.gateway?.orderId) ||
       null,
     gatewayPaymentId:
+      normalizeString(paymentDetails.gatewayPaymentId) ||
       normalizeString(paymentDetails.cashfreePaymentId) ||
       normalizeString(paymentDetails.razorpayPaymentId) ||
+      normalizeString(paymentAttempt?.gateway?.gatewayPaymentId) ||
       normalizeString(paymentAttempt?.gateway?.paymentId) ||
       null,
     failureReason: paymentAttempt?.failureReason || null,
@@ -310,14 +516,131 @@ const buildStandalonePaymentAttemptTransaction = (paymentAttempt) => {
       "Payment update pending",
     currentStatus: null,
     provider: normalizeString(paymentAttempt.gateway?.provider) || null,
-    gatewayOrderId: normalizeString(paymentAttempt.gateway?.orderId) || null,
-    gatewayPaymentId: normalizeString(paymentAttempt.gateway?.paymentId) || null,
+    gatewayOrderId:
+      normalizeString(paymentAttempt.gateway?.gatewayOrderId) ||
+      normalizeString(paymentAttempt.gateway?.merchantOrderId) ||
+      normalizeString(paymentAttempt.gateway?.orderId) ||
+      null,
+    gatewayPaymentId:
+      normalizeString(paymentAttempt.gateway?.gatewayPaymentId) ||
+      normalizeString(paymentAttempt.gateway?.paymentId) ||
+      null,
     failureReason: paymentAttempt.failureReason || null,
     lastWebhookEvent: paymentAttempt.lastWebhookEvent || null,
     isMoneyReceived,
     createdAt: paymentAttempt.createdAt,
     processedAt: paymentAttempt.processedAt || null,
     updatedAt: paymentAttempt.updatedAt || paymentAttempt.createdAt,
+  };
+};
+
+const buildSalesReportItem = (item = {}, index = 0) => {
+  const quantity = resolveAmount(item.quantity, item.qty, 1);
+  const pricePerUnit = resolveAmount(
+    item.price,
+    item.unitPrice,
+    item.finalRate,
+    item.salePrice,
+    0,
+  );
+  const amount = resolveAmount(
+    item.amount,
+    item.total,
+    item.lineTotal,
+    quantity * pricePerUnit,
+  );
+
+  return {
+    sNo: index + 1,
+    itemName:
+      normalizeString(item.name || item.itemName || item.productName) ||
+      `Item ${index + 1}`,
+    hsnSac: normalizeString(item.hsnSac || item.hsn || item.sac) || null,
+    quantity,
+    unit: normalizeString(item.unit || item.packLabel) || null,
+    pricePerUnit,
+    taxablePricePerUnit: resolveAmount(
+      item.taxablePricePerUnit,
+      item.taxableUnitPrice,
+      pricePerUnit,
+    ),
+    finalRate: resolveAmount(item.finalRate, pricePerUnit),
+    discount: resolveAmount(item.discount),
+    discountPercent: normalizeString(item.discountPercent) || null,
+    amount,
+  };
+};
+
+const calculateOverdueDays = (dueDate, balanceDue) => {
+  if (!dueDate || balanceDue <= 0) {
+    return 0;
+  }
+
+  const dueAt = new Date(dueDate);
+
+  if (Number.isNaN(dueAt.getTime())) {
+    return 0;
+  }
+
+  const diffMs = Date.now() - dueAt.getTime();
+
+  if (diffMs <= 0) {
+    return 0;
+  }
+
+  return Math.floor(diffMs / (1000 * 60 * 60 * 24));
+};
+
+const buildSalesReportTransaction = (order, paymentAttempt = null) => {
+  const billingDetails = order.billingDetails || {};
+  const pricing = order.pricing || {};
+  const items = Array.isArray(order.orderItems) ? order.orderItems : [];
+  const total = resolveOrderTotal(pricing);
+  const received = order.paymentStatus === "paid" ? total : 0;
+  const balanceDue = Math.max(0, total - received);
+  const dueDate = order.deliveryDate || order.createdAt;
+  const overdueDays = calculateOverdueDays(dueDate, balanceDue);
+
+  return {
+    id: order.id,
+    orderId: order.id,
+    paymentAttemptId: paymentAttempt?.id || null,
+    createdAt: order.createdAt,
+    date: order.createdAt,
+    orderNo: order.trackingCode || order.orderNumber || order.id,
+    invoiceNo: order.orderNumber || order.id,
+    partyName: normalizeString(order.fullName) || "Customer",
+    gstin: normalizeString(billingDetails.gstin) || null,
+    partyPhone: normalizeString(order.phoneNumber) || null,
+    transactionType: "Sale",
+    total,
+    paymentType:
+      order.paymentMethodLabel ||
+      PAYMENT_METHOD_LABELS[order.paymentMethod] ||
+      "Payment",
+    received,
+    balanceDue,
+    dueDate,
+    status: balanceDue > 0 ? "Overdue" : "Paid",
+    overdueDays,
+    items: items.map((item, index) => buildSalesReportItem(item, index)),
+    discount: resolveAmount(
+      pricing.couponDiscountValue,
+      pricing.discountValue,
+      pricing.discount,
+    ),
+    discountPercent: normalizeString(pricing.couponDiscountPercent) || null,
+    shippingCharge: resolveAmount(
+      pricing.deliveryCharge,
+      pricing.shippingCharge,
+      pricing.transportCharge,
+    ),
+    paymentStatus: order.paymentStatus || null,
+    currentStatus: order.currentStatus || null,
+    provider:
+      normalizeString(order.paymentDetails?.provider) ||
+      normalizeString(paymentAttempt?.gateway?.provider) ||
+      null,
   };
 };
 
@@ -378,6 +701,14 @@ const normalizeProductPayload = (payload = {}, { partial = false } = {}) => {
     payload.category !== undefined
       ? String(payload.category || "").trim()
       : undefined;
+  const variety =
+    payload.variety !== undefined ? String(payload.variety || "").trim() : undefined;
+  const containerSize =
+    payload.containerSize !== undefined
+      ? String(payload.containerSize || "").trim()
+      : undefined;
+  const height =
+    payload.height !== undefined ? String(payload.height || "").trim() : undefined;
   const packLabel =
     payload.packLabel !== undefined
       ? String(payload.packLabel || "").trim()
@@ -421,8 +752,16 @@ const normalizeProductPayload = (payload = {}, { partial = false } = {}) => {
 
   return {
     id: String(payload.id || "").trim() || undefined,
+    sku: payload.sku !== undefined ? String(payload.sku || "").trim() : undefined,
+    skuId:
+      payload.skuId !== undefined ? String(payload.skuId || "").trim() : undefined,
     name,
     category,
+    variety,
+    containerSize,
+    height,
+    brand:
+      payload.brand !== undefined ? String(payload.brand || "").trim() : undefined,
     price,
     mrp,
     weight,
@@ -443,6 +782,8 @@ const normalizeProductPayload = (payload = {}, { partial = false } = {}) => {
         ? Boolean(payload.isFeaturedLatest)
         : undefined,
     packLabel,
+    variant:
+      payload.variant !== undefined ? String(payload.variant || "").trim() : undefined,
     unit,
     badge,
     description,
@@ -455,9 +796,17 @@ const normalizeProductPayload = (payload = {}, { partial = false } = {}) => {
         ? payload.videoClips
         : undefined,
     tags: payload.tags !== undefined ? normalizeStringArray(payload.tags) : undefined,
+    status:
+      payload.status !== undefined
+        ? String(payload.status || "").trim().toLowerCase()
+        : undefined,
     optionGroups:
       payload.optionGroups !== undefined && Array.isArray(payload.optionGroups)
         ? payload.optionGroups
+        : undefined,
+    detailSections:
+      payload.detailSections !== undefined && Array.isArray(payload.detailSections)
+        ? payload.detailSections
         : undefined,
   };
 };
@@ -535,6 +884,12 @@ const loginStaffAccount = async ({ email, password }) => {
     throw new ApiError(400, "Staff email and password are required.");
   }
 
+  const lockoutState = await getLockoutState("staff", normalizedEmail);
+
+  if (lockoutState.isLocked) {
+    throw new ApiError(429, getAccountLockoutMessage(lockoutState.retryAfterSeconds));
+  }
+
   const staffAccount = await findStaffAccountByEmail(normalizedEmail);
 
   if (!staffAccount && (await countStaffAccounts()) === 0) {
@@ -545,14 +900,26 @@ const loginStaffAccount = async ({ email, password }) => {
   }
 
   if (!staffAccount || staffAccount.status !== "active") {
+    await recordFailedLoginAttempt("staff", normalizedEmail, {
+      windowMinutes: env.staff.loginAttemptWindowMinutes,
+      maxAttempts: env.staff.loginMaxAttempts,
+      lockoutMinutes: env.staff.loginLockoutMinutes,
+    });
     throw new ApiError(401, "Staff email or password is incorrect.");
   }
 
   const passwordMatches = await comparePassword(password, staffAccount.passwordHash);
 
   if (!passwordMatches) {
+    await recordFailedLoginAttempt("staff", normalizedEmail, {
+      windowMinutes: env.staff.loginAttemptWindowMinutes,
+      maxAttempts: env.staff.loginMaxAttempts,
+      lockoutMinutes: env.staff.loginLockoutMinutes,
+    });
     throw new ApiError(401, "Staff email or password is incorrect.");
   }
+
+  await clearFailedLoginAttempts("staff", normalizedEmail);
 
   const updatedStaffAccount = await updateStaffAccount(staffAccount.id, {
     lastLoginAt: new Date(),
@@ -627,6 +994,7 @@ const setupInitialAdminOwner = async (payload = {}) => {
     status: "active",
   });
   await seedHomeCategoryItemsForOrganization(organization.id, organization.slug);
+  await seedHomeSliderBannersForOrganization(organization.id, organization.slug);
 
   return {
     accessToken: signStaffAccessToken(createdStaffAccount),
@@ -644,6 +1012,26 @@ const getCurrentStaffAccount = async (staffAccountId) => {
 
   const organization = await findOrganizationById(staffAccount.organizationId);
   return sanitizeStaffAccount(staffAccount, organization);
+};
+
+const getAdminPaymentGatewaySettings = async () => getPaymentGatewayAdminSettings();
+
+const updateAdminPaymentGatewaySettings = async (
+  actorStaffAccountId,
+  payload = {},
+) => {
+  const actor = await findStaffAccountById(actorStaffAccountId);
+
+  if (!actor) {
+    throw new ApiError(404, "Staff account not found.");
+  }
+
+  const provider = String(payload.provider || "").trim().toLowerCase();
+
+  return updateActivePaymentGatewayProvider({
+    provider,
+    updatedByStaffAccountId: actor.id,
+  });
 };
 
 const listAdminProducts = async () =>
@@ -682,6 +1070,116 @@ const updateAdminProduct = async (productId, payload) => {
   });
 };
 
+const adjustAdminProductStock = async (productId, payload = {}, actor = {}) => {
+  const operation = String(payload.operation || "").trim().toLowerCase();
+  const reason = String(payload.reason || "").trim();
+  const note = String(payload.note || "").trim();
+
+  if (!["add", "adjust"].includes(operation)) {
+    throw new ApiError(400, "Stock operation must be add or adjust.");
+  }
+
+  const quantity = Math.floor(Number(payload.quantity || 0));
+  const nextStock = Math.floor(Number(payload.nextStock));
+
+  if (operation === "add") {
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      throw new ApiError(400, "Stock quantity must be greater than zero.");
+    }
+  } else if (!Number.isFinite(nextStock) || nextStock < 0) {
+    throw new ApiError(400, "Adjusted stock must be zero or greater.");
+  }
+
+  const normalizedReason = reason || "manual_correction";
+  const allowedReasons = STOCK_ADJUSTMENT_REASON_RULES[operation];
+
+  if (!allowedReasons || !allowedReasons.has(normalizedReason)) {
+    throw new ApiError(
+      400,
+      "Selected stock adjustment reason is not valid for this action.",
+    );
+  }
+
+  const currentProduct = await findProductById(productId);
+
+  if (!currentProduct) {
+    throw new ApiError(404, "Product not found.");
+  }
+
+  const previousStock = Number(currentProduct.stock || 0);
+  if (operation === "adjust" && nextStock === previousStock) {
+    throw new ApiError(400, "Adjusted stock matches the current stock. No change to save.");
+  }
+
+  const signedDelta = operation === "adjust" ? nextStock - previousStock : quantity;
+  const updatedProduct =
+    operation === "adjust"
+      ? await setProductStock(productId, nextStock)
+      : await adjustProductStock(productId, signedDelta);
+
+  if (!updatedProduct) {
+    throw new ApiError(
+      409,
+      "Unable to adjust stock right now.",
+    );
+  }
+
+  const adjustment = {
+    operation,
+    quantity: operation === "adjust" ? Math.abs(signedDelta) : quantity,
+    delta: signedDelta,
+    previousStock,
+    currentStock: Number(updatedProduct.stock || 0),
+    reason: normalizedReason,
+    note: note || null,
+    adjustedAt: new Date().toISOString(),
+  };
+
+  await createProductStockAdjustmentLog({
+    productId: updatedProduct.id,
+    productReference: updatedProduct.productId,
+    productName: updatedProduct.name,
+    operation,
+    quantity: adjustment.quantity,
+    delta: signedDelta,
+    reason: normalizedReason,
+    note,
+    previousStock: adjustment.previousStock,
+    currentStock: adjustment.currentStock,
+    actor,
+  });
+
+  return {
+    product: await enrichAdminProductWithStockAlerts(updatedProduct, {
+      includeStockAlerts: false,
+    }),
+    adjustment,
+  };
+};
+
+const listAdminProductStockAdjustmentLogs = async (productId, payload = {}) => {
+  const product = await findProductById(productId);
+
+  if (!product) {
+    throw new ApiError(404, "Product not found.");
+  }
+
+  const logs = await listProductStockAdjustmentLogs(
+    product.id,
+    Number(payload.limit || 20),
+  );
+
+  return {
+    product: {
+      id: product.id,
+      productId: product.productId,
+      name: product.name,
+      stock: Number(product.stock || 0),
+    },
+    logs,
+  };
+};
+
 const deleteAdminProduct = async (productId) => {
   const product = await deleteProduct(productId);
 
@@ -690,6 +1188,85 @@ const deleteAdminProduct = async (productId) => {
   }
 
   return product;
+};
+
+const syncAdminProductsFromSheet = async (payload, options = {}) =>
+  syncProductsFromSheet(payload, options);
+
+const getAdminProductStockSnapshot = async (payload = {}) => {
+  const skus = Array.isArray(payload?.skus)
+    ? [...new Set(
+        payload.skus.map((sku) => String(sku || "").trim()).filter(Boolean),
+      )]
+    : [];
+
+  if (!skus.length) {
+    throw new ApiError(400, "A skus array is required.");
+  }
+
+  if (skus.length > env.productSync.maxBatchSize) {
+    throw new ApiError(
+      413,
+      `Stock snapshot request exceeds the maximum batch size of ${env.productSync.maxBatchSize}.`,
+    );
+  }
+
+  const products = await findProductsBySkuReferences(skus);
+  const productsBySkuReference = new Map();
+
+  products.forEach((product) => {
+    const productSku = String(product.sku || "").trim();
+    const productSkuId = String(product.skuId || "").trim();
+
+    if (productSku) {
+      productsBySkuReference.set(productSku, product);
+    }
+
+    if (productSkuId) {
+      productsBySkuReference.set(productSkuId, product);
+    }
+  });
+
+  const items = skus.map((sku) => {
+    const product = productsBySkuReference.get(sku);
+
+    if (!product) {
+      return {
+        sku,
+        found: false,
+        stockQuantity: null,
+        status: null,
+        updatedAt: null,
+      };
+    }
+
+    return {
+      sku,
+        found: true,
+        productId: product.productId,
+        internalId: product.id,
+        skuId: String(product.skuId || "").trim(),
+        productName: product.name,
+        stockQuantity: Number(product.stock || 0),
+      status: String(product.status || "active")
+        .trim()
+        .toLowerCase() === "inactive"
+        ? "Inactive"
+        : "Active",
+      price: product.price,
+      discountPrice: product.price,
+      mrp: product.mrp,
+      variant: String(product.variant || "").trim(),
+      updatedAt: product.updatedAt || null,
+    };
+  });
+
+  return {
+    totalRequested: skus.length,
+    found: items.filter((item) => item.found).length,
+    missing: items.filter((item) => !item.found).length,
+    items,
+  };
 };
 
 const listAdminServices = async (organizationId) =>
@@ -731,7 +1308,7 @@ const listAdminReviews = async (query = {}) =>
     status: String(query.status || "").trim() || undefined,
   });
 
-const updateAdminReview = async (reviewId, payload = {}) => {
+const updateAdminReview = async (reviewId, payload = {}, actor = null) => {
   const review = await findProductReviewById(reviewId);
 
   if (!review) {
@@ -750,10 +1327,6 @@ const updateAdminReview = async (reviewId, payload = {}) => {
     updates.rating = Math.round(rating);
   }
 
-  if (payload.title !== undefined) {
-    updates.title = String(payload.title || "").trim();
-  }
-
   if (payload.body !== undefined || payload.review !== undefined) {
     updates.body = String(payload.body || payload.review || "").trim();
   }
@@ -766,6 +1339,38 @@ const updateAdminReview = async (reviewId, payload = {}) => {
     }
 
     updates.status = status;
+  }
+
+  if (payload.adminReply !== undefined || payload.reply !== undefined) {
+    const rawReply =
+      payload.adminReply && typeof payload.adminReply === "object"
+        ? payload.adminReply.body
+        : payload.adminReply ?? payload.reply;
+    const replyBody = String(rawReply || "").trim();
+
+    if (replyBody.length > 1500) {
+      throw new ApiError(400, "Review reply must be 1500 characters or fewer.");
+    }
+
+    if (replyBody) {
+      let replyAuthorName = "Store team";
+
+      if (actor?.staffAccountId) {
+        const staffAccount = await findStaffAccountById(actor.staffAccountId);
+        replyAuthorName =
+          String(staffAccount?.fullName || actor.email || "").trim() || "Store team";
+      } else if (actor?.email) {
+        replyAuthorName = String(actor.email || "").trim() || "Store team";
+      }
+
+      updates.adminReplyBody = replyBody;
+      updates.adminReplyAuthorName = replyAuthorName;
+      updates.adminReplyUpdatedAt = new Date();
+    } else {
+      updates.adminReplyBody = "";
+      updates.adminReplyAuthorName = "";
+      updates.adminReplyUpdatedAt = null;
+    }
   }
 
   return updateProductReview(reviewId, updates);
@@ -874,6 +1479,278 @@ const listAdminTransactions = async () => {
   };
 };
 
+const listAdminSalesReport = async () => {
+  const [orders, paymentAttempts] = await Promise.all([
+    listAllOrders(),
+    listAllPaymentAttempts(),
+  ]);
+  const serializedOrders = orders.map(serializeOrder);
+  const latestPaymentAttemptByOrderId = new Map();
+
+  for (const paymentAttempt of paymentAttempts) {
+    if (!paymentAttempt.orderId) {
+      continue;
+    }
+
+    const currentEntry = latestPaymentAttemptByOrderId.get(paymentAttempt.orderId);
+    const currentUpdatedAt = currentEntry
+      ? new Date(currentEntry.updatedAt || currentEntry.createdAt).getTime()
+      : -1;
+    const nextUpdatedAt = new Date(
+      paymentAttempt.updatedAt || paymentAttempt.createdAt,
+    ).getTime();
+
+    if (!currentEntry || nextUpdatedAt >= currentUpdatedAt) {
+      latestPaymentAttemptByOrderId.set(paymentAttempt.orderId, paymentAttempt);
+    }
+  }
+
+  const transactions = serializedOrders
+    .map((order) =>
+      buildSalesReportTransaction(
+        order,
+        latestPaymentAttemptByOrderId.get(order.id) || null,
+      ),
+    )
+    .sort(
+      (left, right) =>
+        new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+    );
+
+  const summary = transactions.reduce(
+    (accumulator, transaction) => {
+      accumulator.totalRecords += 1;
+      accumulator.totalSale += resolveAmount(transaction.total);
+      accumulator.totalReceived += resolveAmount(transaction.received);
+      accumulator.totalOutstanding += resolveAmount(transaction.balanceDue);
+
+      if (transaction.status === "Paid") {
+        accumulator.paidCount += 1;
+      } else {
+        accumulator.overdueCount += 1;
+      }
+
+      return accumulator;
+    },
+    {
+      totalRecords: 0,
+      totalSale: 0,
+      totalReceived: 0,
+      totalOutstanding: 0,
+      paidCount: 0,
+      overdueCount: 0,
+    },
+  );
+
+  return {
+    generatedOn: new Date().toISOString(),
+    durationFrom: transactions[transactions.length - 1]?.createdAt || null,
+    durationTo: transactions[0]?.createdAt || null,
+    transactions,
+    summary,
+  };
+};
+
+const serializeAdminCoupon = (coupon) => {
+  const sampleTotalPayable = SAMPLE_COUPON_PRODUCT_TOTAL + SAMPLE_COUPON_DELIVERY_CHARGE;
+  const preview = calculateCouponApplication({
+    type: coupon.type,
+    adjustAmount: coupon.adjustAmount,
+    discountPercent: coupon.discountPercent,
+    totalProductsPrice: SAMPLE_COUPON_PRODUCT_TOTAL,
+    totalPayableAmount: sampleTotalPayable,
+  });
+
+  return {
+    ...coupon,
+    effectiveStatus: resolveCouponEffectiveStatus(coupon),
+    isOneTimeUse: coupon.usageMode === COUPON_USAGE_MODES.oneTime,
+    isRedeemed:
+      Number(coupon.totalUsesRedeemed || 0) >= Number(coupon.totalUsesAllowed || 1),
+    createdByStaff: coupon.createdByStaffAccountId
+      ? {
+          id: coupon.createdByStaffAccountId,
+          email: coupon.createdByStaffEmail || "",
+          fullName: coupon.createdByStaffName || "",
+        }
+      : null,
+    preview: {
+      sampleProductTotal: SAMPLE_COUPON_PRODUCT_TOTAL,
+      sampleDeliveryCharge: SAMPLE_COUPON_DELIVERY_CHARGE,
+      sampleTotalPayable,
+      discountValue: preview.discountValue,
+      adjustedProductTotal: preview.adjustedProductTotal,
+      adjustedTotalPayable: preview.adjustedTotalPayable,
+      appliesTo: preview.appliesTo,
+    },
+  };
+};
+
+const listAdminCoupons = async () =>
+  (await listCouponCodes()).map(serializeAdminCoupon);
+
+const createAdminCoupon = async (staffAccountId, payload = {}) => {
+  const type = normalizeCouponType(payload.type);
+
+  if (!Object.values(COUPON_TYPES).includes(type)) {
+    throw new ApiError(400, "Coupon type is invalid.");
+  }
+
+  const rawCode = normalizeCouponCode(payload.code || "");
+  const code = rawCode || generateCouponCode(type);
+  const existingCoupon = await findCouponCodeByCode(code);
+
+  if (existingCoupon) {
+    throw new ApiError(409, "Coupon code already exists. Try another code.");
+  }
+
+  const adjustAmount =
+    type === COUPON_TYPES.adjust
+      ? normalizeWholeAmount(payload.adjustAmount ?? payload.amount)
+      : 0;
+  const discountPercent =
+    type === COUPON_TYPES.discount
+      ? normalizeDiscountPercent(payload.discountPercent ?? payload.percent)
+      : 0;
+
+  if (type === COUPON_TYPES.adjust && (!Number.isFinite(adjustAmount) || adjustAmount <= 0)) {
+    throw new ApiError(400, "Adjust coupon amount must be greater than zero.");
+  }
+
+  if (
+    type === COUPON_TYPES.discount &&
+    (!Number.isFinite(discountPercent) || discountPercent <= 0 || discountPercent > 100)
+  ) {
+    throw new ApiError(400, "Discount coupon percent must be between 0 and 100.");
+  }
+
+  let expiresAt = null;
+
+  if (payload.expiresAt) {
+    const parsedDate = new Date(payload.expiresAt);
+
+    if (Number.isNaN(parsedDate.getTime())) {
+      throw new ApiError(400, "Coupon expiry date is invalid.");
+    }
+
+    if (parsedDate.getTime() <= Date.now()) {
+      throw new ApiError(400, "Coupon expiry date must be in the future.");
+    }
+
+    expiresAt = parsedDate.toISOString();
+  }
+
+  const createdCoupon = await createCouponCode({
+    code,
+    type,
+    adjustAmount,
+    discountPercent,
+    status: COUPON_STATUSES.active,
+    usageMode: COUPON_USAGE_MODES.oneTime,
+    totalUsesAllowed: 1,
+    notes: normalizeString(payload.notes),
+    createdByStaffAccountId: staffAccountId || null,
+    expiresAt,
+    metadata: {
+      pricingRule:
+        type === COUPON_TYPES.adjust
+          ? "TotalPayableAmount - AdjustCouponAmount"
+          : "TotalProductsPrice - DiscountCouponPercent",
+      calculationScope:
+        type === COUPON_TYPES.adjust ? "total_payable_including_delivery" : "product_total_only",
+    },
+  });
+
+  return serializeAdminCoupon(createdCoupon);
+};
+
+const updateAdminCoupon = async (couponId, payload = {}) => {
+  const currentCoupon = await findCouponCodeById(couponId);
+
+  if (!currentCoupon) {
+    throw new ApiError(404, "Coupon not found.");
+  }
+
+  const effectiveStatus = resolveCouponEffectiveStatus(currentCoupon);
+
+  if (
+    effectiveStatus === COUPON_STATUSES.used ||
+    effectiveStatus === COUPON_STATUSES.expired
+  ) {
+    throw new ApiError(409, "Used or expired coupons cannot be modified.");
+  }
+
+  const nextStatus =
+    payload.status !== undefined
+      ? normalizeCouponStatus(payload.status)
+      : currentCoupon.status;
+
+  if (
+    payload.status !== undefined &&
+    ![COUPON_STATUSES.active, COUPON_STATUSES.inactive].includes(nextStatus)
+  ) {
+    throw new ApiError(400, "Coupon status must be active or inactive.");
+  }
+
+  let expiresAt = currentCoupon.expiresAt;
+
+  if (payload.expiresAt !== undefined) {
+    if (!payload.expiresAt) {
+      expiresAt = null;
+    } else {
+      const parsedDate = new Date(payload.expiresAt);
+
+      if (Number.isNaN(parsedDate.getTime())) {
+        throw new ApiError(400, "Coupon expiry date is invalid.");
+      }
+
+      if (parsedDate.getTime() <= Date.now()) {
+        throw new ApiError(400, "Coupon expiry date must be in the future.");
+      }
+
+      expiresAt = parsedDate.toISOString();
+    }
+  }
+
+  const updatedCoupon = await updateCouponCode(couponId, {
+    status: nextStatus,
+    notes: payload.notes !== undefined ? normalizeString(payload.notes) : undefined,
+    expiresAt,
+  });
+
+  return serializeAdminCoupon(updatedCoupon);
+};
+
+const deleteAdminCoupon = async (couponId) => {
+  const coupon = await findCouponCodeById(couponId);
+
+  if (!coupon) {
+    throw new ApiError(404, "Coupon not found.");
+  }
+
+  if (Number(coupon.totalUsesRedeemed || 0) > 0 || coupon.redeemedOrderId) {
+    throw new ApiError(
+      409,
+      "Redeemed coupons cannot be deleted because they are part of order history.",
+    );
+  }
+
+  if (coupon.reservedReference) {
+    throw new ApiError(
+      409,
+      "Coupon is currently reserved in an active checkout and cannot be deleted right now.",
+    );
+  }
+
+  const deletedCoupon = await deleteCouponCode(couponId);
+
+  if (!deletedCoupon) {
+    throw new ApiError(404, "Coupon not found.");
+  }
+
+  return serializeAdminCoupon(deletedCoupon);
+};
+
 const getAdminOrder = async (orderId) => {
   const order = await findOrderById(orderId);
 
@@ -892,8 +1769,14 @@ const updateAdminOrder = async (orderId, payload = {}) => {
   }
 
   const previousStatus = normalizeOrderCurrentStatus(currentOrder.currentStatus);
+  const currentRefundRequest = buildOrderRefundRequest(currentOrder);
   const updates = {};
   let nextTrackingTimeline;
+  let nextPaymentDetails =
+    currentOrder.paymentDetails && typeof currentOrder.paymentDetails === "object"
+      ? { ...currentOrder.paymentDetails }
+      : {};
+  let hasPaymentDetailsMutation = false;
   const nowIso = new Date().toISOString();
 
   if (payload.fullName !== undefined) {
@@ -971,25 +1854,238 @@ const updateAdminOrder = async (orderId, payload = {}) => {
     updates.trackingTimeline = nextTrackingTimeline;
   }
 
-  ["deliveryAddress", "vehicle", "orderItems", "recommendedItems", "billingDetails", "deliveryLocation", "paymentDetails", "pricing"].forEach((key) => {
+  if (payload.paymentDetails !== undefined) {
+    nextPaymentDetails =
+      payload.paymentDetails && typeof payload.paymentDetails === "object"
+        ? { ...payload.paymentDetails }
+        : {};
+    hasPaymentDetailsMutation = true;
+  }
+
+  let nextStatus = normalizeOrderCurrentStatus(
+    updates.currentStatus !== undefined ? updates.currentStatus : currentOrder.currentStatus,
+  );
+
+  if (payload.cancellationReason !== undefined) {
+    updates.cancellationReason = String(payload.cancellationReason || "")
+      .trim()
+      .toLowerCase();
+  }
+
+  if (payload.cancellationNote !== undefined) {
+    updates.cancellationNote = String(payload.cancellationNote || "").trim();
+  }
+
+  if (payload.refundReason !== undefined) {
+    updates.refundReason = String(payload.refundReason || "").trim();
+  }
+
+  if (payload.refundAccountAction !== undefined) {
+    const refundAccountAction = String(payload.refundAccountAction || "")
+      .trim()
+      .toLowerCase();
+    const refundRequestNote = String(
+      payload.refundRequestNote || payload.refundAccountNote || "",
+    ).trim();
+
+    if (refundAccountAction === "request_resubmit") {
+      if (!currentRefundRequest.accountDetails) {
+        throw new ApiError(
+          400,
+          "Customer refund account details must be submitted before requesting a resubmission.",
+        );
+      }
+
+      if (!refundRequestNote) {
+        throw new ApiError(400, "A resubmission note is required for the customer.");
+      }
+
+      nextPaymentDetails = buildPaymentDetailsWithRefundRequest(currentOrder, {
+        ...currentRefundRequest,
+        status: REFUND_REQUEST_STATUSES.resubmitRequired,
+        adminNote: refundRequestNote,
+        updatedAt: nowIso,
+        resubmitRequestedAt: nowIso,
+      });
+      hasPaymentDetailsMutation = true;
+    } else if (refundAccountAction === "mark_refunded") {
+      if (!currentRefundRequest.accountDetails) {
+        throw new ApiError(
+          400,
+          "Refund account details are required before marking this order as refunded.",
+        );
+      }
+
+      nextPaymentDetails = buildPaymentDetailsWithRefundRequest(currentOrder, {
+        ...currentRefundRequest,
+        status: REFUND_REQUEST_STATUSES.refunded,
+        updatedAt: nowIso,
+        refundedAt: currentOrder.refundedAt || nowIso,
+      });
+      hasPaymentDetailsMutation = true;
+      updates.currentStatus = "refunded";
+      updates.refundedAt = currentOrder.refundedAt || nowIso;
+      updates.paymentStatus = "refunded";
+      nextTrackingTimeline = ensureTrackingStatusEntry(
+        nextTrackingTimeline || currentOrder.trackingTimeline || [],
+        "refunded",
+        nowIso,
+      );
+      updates.trackingTimeline = nextTrackingTimeline;
+    } else if (refundAccountAction) {
+      throw new ApiError(400, "Refund account action is invalid.");
+    }
+  }
+
+  nextStatus = normalizeOrderCurrentStatus(
+    updates.currentStatus !== undefined ? updates.currentStatus : currentOrder.currentStatus,
+  );
+
+  if (nextStatus === "cancelled") {
+    const cancellationReason = String(
+      updates.cancellationReason || currentOrder.cancellationReason || "",
+    )
+      .trim()
+      .toLowerCase();
+
+    if (!Object.keys(ORDER_CANCELLATION_REASONS).includes(cancellationReason)) {
+      throw new ApiError(400, "Order cancellation reason is required.");
+    }
+
+    updates.cancelledAt = currentOrder.cancelledAt || nowIso;
+    updates.refundedAt = null;
+  }
+
+  if (nextStatus === "refunded") {
+    const refundReason = String(
+      updates.refundReason || currentOrder.refundReason || "",
+    ).trim();
+
+    if (!refundReason) {
+      throw new ApiError(400, "Refund reason is required.");
+    }
+
+    updates.refundedAt = currentOrder.refundedAt || nowIso;
+    updates.paymentStatus = "refunded";
+    nextPaymentDetails = buildPaymentDetailsWithRefundRequest(currentOrder, {
+      ...currentRefundRequest,
+      status: REFUND_REQUEST_STATUSES.refunded,
+      accountDetails: currentRefundRequest.accountDetails,
+      adminNote: currentRefundRequest.adminNote,
+      submittedAt: currentRefundRequest.submittedAt,
+      updatedAt: nowIso,
+      resubmitRequestedAt: currentRefundRequest.resubmitRequestedAt,
+      refundedAt: currentOrder.refundedAt || nowIso,
+    });
+    hasPaymentDetailsMutation = true;
+  }
+
+  if (nextStatus === "confirmed" && previousStatus === "placed") {
+    nextTrackingTimeline = ensureTrackingStatusEntry(
+      nextTrackingTimeline || currentOrder.trackingTimeline || [],
+      "confirmed",
+      nowIso,
+    );
+    updates.trackingTimeline = nextTrackingTimeline;
+  }
+
+  if (nextStatus !== "cancelled") {
+    updates.cancellationReason =
+      payload.cancellationReason !== undefined
+        ? String(payload.cancellationReason || "").trim().toLowerCase()
+        : currentOrder.cancellationReason || "";
+    updates.cancellationNote =
+      payload.cancellationNote !== undefined
+        ? String(payload.cancellationNote || "").trim()
+        : currentOrder.cancellationNote || "";
+  }
+
+  if (nextStatus !== "refunded" && payload.refundReason === undefined) {
+    updates.refundReason = currentOrder.refundReason || "";
+  }
+
+  ["deliveryAddress", "vehicle", "orderItems", "recommendedItems", "billingDetails", "deliveryLocation", "pricing"].forEach((key) => {
     if (payload[key] !== undefined) {
       updates[key] =
         payload[key] && typeof payload[key] === "object" ? payload[key] : payload[key];
     }
   });
 
+  if (hasPaymentDetailsMutation) {
+    updates.paymentDetails = nextPaymentDetails;
+  }
+
   const updatedOrder = await updateOrder(orderId, updates);
   const serializedOrder = serializeOrder(updatedOrder);
-  const nextStatus = normalizeOrderCurrentStatus(serializedOrder.currentStatus);
+  const serializedNextStatus = normalizeOrderCurrentStatus(serializedOrder.currentStatus);
 
-  if (nextStatus && nextStatus !== previousStatus) {
-    await notifyOrderPrimaryStatus(serializedOrder, nextStatus);
+  if (serializedNextStatus && serializedNextStatus !== previousStatus) {
+    await notifyOrderPrimaryStatus(serializedOrder, serializedNextStatus);
   }
 
   return serializedOrder;
 };
 
 const listAdminCustomers = async () => (await listUsers()).map(sanitizeCustomer);
+
+const createAdminCustomer = async (payload = {}) => {
+  const fullName = String(payload.fullName || payload.name || "").trim();
+  const email = normalizeEmail(String(payload.email || "").trim());
+  const password = String(payload.password || "");
+  const phoneNumber = String(payload.phoneNumber || payload.phone || "").trim();
+  const isVip = payload.isVip !== undefined ? Boolean(payload.isVip) : false;
+  const customerCategory =
+    payload.customerCategory !== undefined
+      ? normalizeCustomerCategory(payload.customerCategory)
+      : CUSTOMER_CATEGORIES.normal;
+
+  if (!fullName) {
+    throw new ApiError(400, "Customer full name is required.");
+  }
+
+  if (!isValidEmail(email)) {
+    throw new ApiError(400, "Customer email format is invalid.");
+  }
+
+  if (!validatePasswordStrength(password)) {
+    throw new ApiError(
+      400,
+      "Customer password must be at least 8 characters and include uppercase, lowercase, number, and symbol.",
+    );
+  }
+
+  if (phoneNumber && !isValidPhoneNumber(phoneNumber)) {
+    throw new ApiError(400, "Customer phone number format is invalid.");
+  }
+
+  const [existingEmailUser, existingPhoneUser] = await Promise.all([
+    findUserByEmail(email),
+    phoneNumber ? findUserByPhone(phoneNumber) : Promise.resolve(null),
+  ]);
+
+  if (existingEmailUser) {
+    throw new ApiError(409, "A customer account with this email already exists.");
+  }
+
+  if (existingPhoneUser) {
+    throw new ApiError(409, "A customer account with this phone number already exists.");
+  }
+
+  const customer = await createUser({
+    fullName,
+    email,
+    phoneNumber: phoneNumber || null,
+    passwordHash: await hashPassword(password),
+    authProvider: "local",
+    isVerified: true,
+    isVip,
+    paymentAccess: DEFAULT_PAYMENT_ACCESS,
+    customerCategory,
+    accountStatus: USER_ACCOUNT_STATUSES.active,
+  });
+
+  return sanitizeCustomer(customer);
+};
 
 const getAdminCustomer = async (customerId) => {
   const customer = await findUserById(customerId);
@@ -999,6 +2095,77 @@ const getAdminCustomer = async (customerId) => {
   }
 
   return sanitizeCustomer(customer);
+};
+
+const getAdminCustomerCart = async (customerId) => {
+  const customer = await findUserById(customerId);
+
+  if (!customer) {
+    throw new ApiError(404, "Customer not found.");
+  }
+
+  return {
+    customer: sanitizeCustomer(customer),
+    cart: await getUserCart(customer.id),
+  };
+};
+
+const previewAdminCustomerCartCheckout = async (customerId, payload = {}) => {
+  const customer = await findUserById(customerId);
+
+  if (!customer) {
+    throw new ApiError(404, "Customer not found.");
+  }
+
+  const checkoutPayload = normalizeAdminCustomerCartCheckoutPayload(customer, payload);
+  const preview = await previewCartCheckout(customer.id, checkoutPayload);
+
+  return {
+    customer: sanitizeCustomer(customer),
+    cart: await getUserCart(customer.id),
+    preview,
+    checkoutPayload,
+  };
+};
+
+const createAdminCustomerCartPaymentCheckout = async (customerId, payload = {}) => {
+  const customer = await findUserById(customerId);
+
+  if (!customer) {
+    throw new ApiError(404, "Customer not found.");
+  }
+
+  const checkoutPayload = normalizeAdminCustomerCartCheckoutPayload(customer, payload);
+  const checkout = await createCartPaymentCheckout(customer.id, {
+    ...checkoutPayload,
+    returnPath: "/",
+  });
+
+  return {
+    customer: sanitizeCustomer(customer),
+    cart: await getUserCart(customer.id),
+    checkout,
+  };
+};
+
+const getAdminCustomerCartPaymentAttempt = async (customerId, paymentAttemptId) => {
+  const customer = await findUserById(customerId);
+
+  if (!customer) {
+    throw new ApiError(404, "Customer not found.");
+  }
+
+  const paymentAttempt = await findPaymentAttemptById(paymentAttemptId);
+
+  if (!paymentAttempt || paymentAttempt.userId !== customer.id) {
+    throw new ApiError(404, "Payment transaction not found.");
+  }
+
+  return {
+    customer: sanitizeCustomer(customer),
+    cart: await getUserCart(customer.id),
+    paymentAttempt: serializeAdminPaymentAttempt(paymentAttempt),
+  };
 };
 
 const updateAdminCustomer = async (customerId, payload = {}) => {
@@ -1026,6 +2193,64 @@ const updateAdminCustomer = async (customerId, payload = {}) => {
     updates.isVerified = Boolean(payload.isVerified);
   }
 
+  if (payload.isVip !== undefined) {
+    updates.isVip = Boolean(payload.isVip);
+  }
+
+  if (payload.paymentAccess !== undefined) {
+    if (!payload.paymentAccess || typeof payload.paymentAccess !== "object") {
+      throw new ApiError(400, "Customer payment access is invalid.");
+    }
+
+    updates.paymentAccess = normalizeUserPaymentAccess(payload.paymentAccess);
+  }
+
+  if (payload.customerCategory !== undefined) {
+    updates.customerCategory = normalizeCustomerCategory(payload.customerCategory);
+  }
+
+  if (payload.accountStatus !== undefined) {
+    updates.accountStatus = normalizeUserAccountStatus(payload.accountStatus);
+  }
+
+  if (payload.banReason !== undefined) {
+    updates.banReason = String(payload.banReason || "").trim();
+  }
+
+  if (payload.bannedUntil !== undefined) {
+    if (!payload.bannedUntil) {
+      updates.bannedUntil = null;
+    } else {
+      const bannedUntil = new Date(payload.bannedUntil);
+
+      if (Number.isNaN(bannedUntil.getTime())) {
+        throw new ApiError(400, "Temporary ban expiry is invalid.");
+      }
+
+      updates.bannedUntil = bannedUntil.toISOString();
+    }
+  }
+
+  const nextAccountStatus = normalizeUserAccountStatus(
+    updates.accountStatus !== undefined ? updates.accountStatus : customer.accountStatus,
+  );
+
+  if (nextAccountStatus === USER_ACCOUNT_STATUSES.active) {
+    updates.bannedUntil = null;
+    updates.banReason = "";
+  }
+
+  if (nextAccountStatus === USER_ACCOUNT_STATUSES.bannedPermanent) {
+    updates.bannedUntil = null;
+  }
+
+  if (
+    nextAccountStatus === USER_ACCOUNT_STATUSES.bannedTemporary &&
+    !String(updates.bannedUntil || customer.bannedUntil || "").trim()
+  ) {
+    throw new ApiError(400, "Temporary ban requires an expiry date and time.");
+  }
+
   if (payload.deliveryAddress !== undefined) {
     updates.deliveryAddress =
       payload.deliveryAddress && typeof payload.deliveryAddress === "object"
@@ -1042,6 +2267,45 @@ const updateAdminCustomer = async (customerId, payload = {}) => {
 
   const updatedCustomer = await updateUser(customerId, updates);
   return sanitizeCustomer(updatedCustomer);
+};
+
+const addItemToAdminCustomerCart = async (customerId, payload = {}) => {
+  const customer = await findUserById(customerId);
+
+  if (!customer) {
+    throw new ApiError(404, "Customer not found.");
+  }
+
+  return {
+    customer: sanitizeCustomer(customer),
+    cart: await addCartItem(customer.id, payload),
+  };
+};
+
+const updateAdminCustomerCartItem = async (customerId, itemId, payload = {}) => {
+  const customer = await findUserById(customerId);
+
+  if (!customer) {
+    throw new ApiError(404, "Customer not found.");
+  }
+
+  return {
+    customer: sanitizeCustomer(customer),
+    cart: await updateCartItemQuantity(customer.id, itemId, payload),
+  };
+};
+
+const removeAdminCustomerCartItem = async (customerId, itemId) => {
+  const customer = await findUserById(customerId);
+
+  if (!customer) {
+    throw new ApiError(404, "Customer not found.");
+  }
+
+  return {
+    customer: sanitizeCustomer(customer),
+    cart: await removeCartItem(customer.id, itemId),
+  };
 };
 
 const listAdminStaffAccounts = async (organizationId) => {
@@ -1158,31 +2422,50 @@ const deleteAdminStaffAccount = async (actorStaffAccountId, targetStaffAccountId
 };
 
 module.exports = {
+  addItemToAdminCustomerCart,
+  adjustAdminProductStock,
+  listAdminProductStockAdjustmentLogs,
   bootstrapAdminWorkspace,
+  createAdminCustomerCartPaymentCheckout,
+  createAdminCustomer,
+  createAdminCoupon,
   createAdminProduct,
   createAdminService,
   createAdminStaffAccount,
+  deleteAdminCoupon,
   deleteAdminProduct,
   deleteAdminReview,
   deleteAdminService,
   deleteAdminStaffAccount,
   getAdminCustomer,
+  getAdminCustomerCart,
+  getAdminPaymentGatewaySettings,
+  getAdminCustomerCartPaymentAttempt,
   getAdminOrder,
   getAdminProduct,
+  getAdminProductStockSnapshot,
   getAdminSetupStatus,
   getAdminService,
   getCurrentStaffAccount,
+  listAdminCoupons,
   listAdminCustomers,
   listAdminOrders,
   listAdminProducts,
   listAdminReviews,
+  listAdminSalesReport,
   listAdminServices,
   listAdminStaffAccounts,
   listAdminTransactions,
   loginStaffAccount,
+  previewAdminCustomerCartCheckout,
+  removeAdminCustomerCartItem,
   setupInitialAdminOwner,
+  syncAdminProductsFromSheet,
   updateAdminCustomer,
+  updateAdminCustomerCartItem,
+  updateAdminCoupon,
   updateAdminOrder,
+  updateAdminPaymentGatewaySettings,
   updateAdminProduct,
   updateAdminReview,
   updateAdminService,

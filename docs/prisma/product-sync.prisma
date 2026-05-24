@@ -1,0 +1,62 @@
+// Reference Prisma schema for a future Prisma migration.
+// The active implementation in this repository uses Mongoose/MongoDB.
+
+model Product {
+  id               String        @id @default(cuid())
+  productId        String        @unique
+  sku              String?       @unique
+  name             String
+  category         String
+  brand            String?       @default("")
+  price            Decimal       @db.Decimal(12, 2)
+  mrp              Decimal?      @db.Decimal(12, 2)
+  weight           Decimal       @db.Decimal(12, 2)
+  offer            String?       @default("")
+  minOrderQuantity Int           @default(1)
+  stock            Int           @default(0)
+  packLabel        String
+  variant          String?       @default("")
+  unit             String
+  badge            String
+  description      String
+  image            String?
+  images           Json?
+  tags             Json?
+  status           ProductStatus @default(ACTIVE)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+}
+
+model ProductSyncLog {
+  id              String               @id @default(cuid())
+  requestId       String               @unique
+  idempotencyKey  String?
+  payloadHash     String?
+  source          String               @default("google_sheets")
+  status          ProductSyncRunStatus @default(IN_PROGRESS)
+  dryRun          Boolean              @default(false)
+  totalRows       Int                  @default(0)
+  successCount    Int                  @default(0)
+  createdCount    Int                  @default(0)
+  updatedCount    Int                  @default(0)
+  failedCount     Int                  @default(0)
+  executionTimeMs Int                  @default(0)
+  errorDetails    Json?
+  requestMeta     Json?
+  audit           Json?
+  completedAt     DateTime?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ProductSyncRunStatus {
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  DRY_RUN
+}

@@ -1,5 +1,11 @@
 const { env } = require("../config/env");
 const { findCartByUserId } = require("../repositories/cart.repository");
+const {
+  findCouponCodeByCode,
+  reserveCouponCode,
+  releaseCouponReservation,
+  consumeReservedCouponCode,
+} = require("../repositories/coupon.repository");
 const { createOrder } = require("../repositories/order.repository");
 const {
   createPaymentAttempt,
@@ -17,15 +23,26 @@ const { ApiError } = require("../utils/apiError");
 const { isValidPhoneNumber } = require("../utils/validators");
 const { consumeUserCartItems } = require("./cart.service");
 const {
+  COUPON_STATUSES,
+  COUPON_TYPES,
+  calculateCouponApplication,
+  normalizeCouponCode,
+  resolveCouponEffectiveStatus,
+} = require("./coupon.service");
+const {
   calculateTransportCharge,
   getDistanceKmForLocation,
 } = require("./delivery.service");
 const { notifyOrderPrimaryStatus, serializeOrder } = require("./order.service");
 const {
-  buildCashfreeReturnUrl,
-  createRemoteCashfreeOrder,
-  ensureCashfreeCheckoutConfigured,
-} = require("./cashfree.service");
+  buildPaymentReturnUrl,
+  createRemotePaymentOrder,
+  ensurePaymentGatewayCheckoutConfigured,
+} = require("./payment-gateway.service");
+const {
+  PAYMENT_METHODS,
+  assertUserCanUsePaymentMethod,
+} = require("./user-account.service");
 
 const PAYMENT_STATUS_LABELS = {
   created: "Draft created",
@@ -49,6 +66,11 @@ const buildStockErrorMessage = (product, requestedQuantity) => {
 };
 
 const normalizeString = (value) => String(value || "").trim();
+
+const roundCurrency = (value) => Math.max(0, Math.round(Number(value || 0)));
+
+const buildCouponUnavailableError = (message) =>
+  new ApiError(409, message || "Coupon is unavailable right now.");
 
 const normalizeDeliveryAddress = (deliveryAddress = {}) => {
   if (typeof deliveryAddress === "string") {
@@ -138,6 +160,110 @@ const getSuggestedDeliveryDate = () => {
   const deliveryDate = new Date();
   deliveryDate.setDate(deliveryDate.getDate() + env.delivery.cartDeliveryOffsetDays);
   return deliveryDate.toISOString();
+};
+
+const validateCouponForCheckout = async ({
+  userId,
+  couponCode,
+  reservationReference = "",
+}) => {
+  const normalizedCouponCode = normalizeCouponCode(couponCode);
+
+  if (!normalizedCouponCode) {
+    return null;
+  }
+
+  const coupon = await findCouponCodeByCode(normalizedCouponCode);
+
+  if (!coupon) {
+    throw new ApiError(404, "Coupon code is invalid.");
+  }
+
+  const effectiveStatus = resolveCouponEffectiveStatus(coupon);
+
+  if (effectiveStatus === COUPON_STATUSES.inactive) {
+    throw buildCouponUnavailableError("Coupon is inactive right now.");
+  }
+
+  if (effectiveStatus === COUPON_STATUSES.used) {
+    throw buildCouponUnavailableError("Coupon has already been used.");
+  }
+
+  if (effectiveStatus === COUPON_STATUSES.expired) {
+    throw buildCouponUnavailableError("Coupon has expired.");
+  }
+
+  const reservationExpiryTimestamp = coupon.reservationExpiresAt
+    ? new Date(coupon.reservationExpiresAt).getTime()
+    : 0;
+  const hasActiveReservation =
+    Boolean(coupon.reservedReference) &&
+    Number.isFinite(reservationExpiryTimestamp) &&
+    reservationExpiryTimestamp > Date.now();
+
+  if (
+    hasActiveReservation &&
+    coupon.reservedReference !== reservationReference &&
+    coupon.reservedByUserId !== userId
+  ) {
+    throw buildCouponUnavailableError(
+      "Coupon is currently reserved for another checkout. Please try again shortly.",
+    );
+  }
+
+  return coupon;
+};
+
+const applyCouponToPricing = ({ pricing, coupon }) => {
+  if (!coupon) {
+    return {
+      pricing: {
+        ...pricing,
+        totalBeforeCoupon: pricing.total,
+        couponCode: "",
+        couponType: "",
+        couponDiscountValue: 0,
+        couponAdjustAmount: 0,
+        couponDiscountPercent: 0,
+        itemsSubtotalAfterCoupon: pricing.itemsSubtotal,
+      },
+      appliedCoupon: null,
+    };
+  }
+
+  const couponCalculation = calculateCouponApplication({
+    type: coupon.type,
+    adjustAmount: coupon.adjustAmount,
+    discountPercent: coupon.discountPercent,
+    totalProductsPrice: pricing.itemsSubtotal,
+    totalPayableAmount: pricing.total,
+  });
+
+  return {
+    pricing: {
+      ...pricing,
+      totalBeforeCoupon: pricing.total,
+      total: roundCurrency(couponCalculation.adjustedTotalPayable),
+      couponCode: coupon.code,
+      couponType: coupon.type,
+      couponDiscountValue: roundCurrency(couponCalculation.discountValue),
+      couponAdjustAmount:
+        coupon.type === COUPON_TYPES.adjust ? coupon.adjustAmount : 0,
+      couponDiscountPercent:
+        coupon.type === COUPON_TYPES.discount ? coupon.discountPercent : 0,
+      itemsSubtotalAfterCoupon: roundCurrency(
+        couponCalculation.adjustedProductTotal,
+      ),
+    },
+    appliedCoupon: {
+      id: coupon.id,
+      code: coupon.code,
+      type: coupon.type,
+      adjustAmount: coupon.adjustAmount,
+      discountPercent: coupon.discountPercent,
+      discountValue: roundCurrency(couponCalculation.discountValue),
+    },
+  };
 };
 
 const getCartLineItems = async (userId) => {
@@ -285,7 +411,23 @@ const buildCheckoutPreview = async (userId, payload = {}) => {
   }
 
   const deliveryCharge = Math.max(0, Math.round(Number(deliveryResult.cost || 0)));
-  const total = cart.summary.itemsSubtotal + deliveryCharge;
+  const basePricing = {
+    itemsSubtotal: cart.summary.itemsSubtotal,
+    deliveryCharge,
+    total: cart.summary.itemsSubtotal + deliveryCharge,
+    currency: cart.summary.currency,
+    distanceKm,
+    deliveryRate: deliveryResult.rate || 0,
+    totalWeightKg: cart.summary.totalWeightKg,
+  };
+  const coupon = await validateCouponForCheckout({
+    userId,
+    couponCode: payload.couponCode,
+  });
+  const couponPricing = applyCouponToPricing({
+    pricing: basePricing,
+    coupon,
+  });
 
   return {
     user,
@@ -294,15 +436,8 @@ const buildCheckoutPreview = async (userId, payload = {}) => {
     deliveryLocation,
     orderItems: cart.orderItems,
     summary: cart.summary,
-    pricing: {
-      itemsSubtotal: cart.summary.itemsSubtotal,
-      deliveryCharge,
-      total,
-      currency: cart.summary.currency,
-      distanceKm,
-      deliveryRate: deliveryResult.rate || 0,
-      totalWeightKg: cart.summary.totalWeightKg,
-    },
+    pricing: couponPricing.pricing,
+    appliedCoupon: couponPricing.appliedCoupon,
     deliveryChargeDetails: {
       message: deliveryResult.message,
       rate: deliveryResult.rate || 0,
@@ -349,16 +484,49 @@ const previewCartCheckout = async (userId, payload = {}) => {
     summary: preview.summary,
     pricing: preview.pricing,
     deliveryChargeDetails: preview.deliveryChargeDetails,
+    appliedCoupon: preview.appliedCoupon,
     suggestedDeliveryDate: preview.suggestedDeliveryDate,
   };
 };
 
 const placeCartOrderCashOnDelivery = async (userId, payload = {}) => {
+  const customer = await findUserById(userId);
+
+  if (!customer) {
+    throw new ApiError(404, "Customer not found.");
+  }
+
+  assertUserCanUsePaymentMethod(customer, PAYMENT_METHODS.cashOnDelivery);
+
   const preparedOrder = await buildPreparedCartOrder(
     userId,
     payload,
-    "cash_on_delivery",
+    PAYMENT_METHODS.cashOnDelivery,
   );
+  const couponReservationReference = preparedOrder.appliedCoupon?.code
+    ? `cod:${userId}:${Date.now()}`
+    : "";
+
+  if (preparedOrder.appliedCoupon?.code) {
+    const reservedCoupon = await reserveCouponCode({
+      code: preparedOrder.appliedCoupon.code,
+      reservationReference: couponReservationReference,
+      userId,
+      reservationExpiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    });
+
+    if (!reservedCoupon) {
+      throw buildCouponUnavailableError(
+        "Coupon is unavailable right now. Refresh checkout and try again.",
+      );
+    }
+
+    preparedOrder.appliedCoupon = {
+      ...preparedOrder.appliedCoupon,
+      reservationReference: couponReservationReference,
+    };
+  }
+
   await reservePreparedOrderStock(preparedOrder.orderItems);
 
   let order;
@@ -380,7 +548,7 @@ const placeCartOrderCashOnDelivery = async (userId, payload = {}) => {
       deliveryLocation: preparedOrder.deliveryLocation,
       paymentMethod: "cash_on_delivery",
       paymentStatus: "pay_on_delivery",
-      currentStatus: "confirmed",
+      currentStatus: "placed",
       paymentDetails: {
         provider: "cash_on_delivery",
         checkoutSource: preparedOrder.orderSource,
@@ -390,8 +558,26 @@ const placeCartOrderCashOnDelivery = async (userId, payload = {}) => {
         checkoutSource: preparedOrder.orderSource,
       },
     });
+
+    if (preparedOrder.appliedCoupon?.code && couponReservationReference) {
+      const consumedCoupon = await consumeReservedCouponCode({
+        code: preparedOrder.appliedCoupon.code,
+        reservationReference: couponReservationReference,
+        userId,
+        orderId: order.id,
+      });
+
+      if (!consumedCoupon) {
+        throw buildCouponUnavailableError(
+          "Coupon could not be finalized for this order. Please try again.",
+        );
+      }
+    }
   } catch (error) {
     await releaseProductStocks(preparedOrder.orderItems);
+    if (couponReservationReference) {
+      await releaseCouponReservation(couponReservationReference);
+    }
     throw error;
   }
 
@@ -401,13 +587,32 @@ const placeCartOrderCashOnDelivery = async (userId, payload = {}) => {
   return serializedOrder;
 };
 
-const createCartCashfreeCheckout = async (userId, payload = {}) => {
-  ensureCashfreeCheckoutConfigured();
+const createCartPaymentCheckout = async (userId, payload = {}) => {
+  const provider = await ensurePaymentGatewayCheckoutConfigured();
+  const paymentMethod =
+    String(payload.paymentMethod || PAYMENT_METHODS.onlinePayment)
+      .trim()
+      .toLowerCase() || PAYMENT_METHODS.onlinePayment;
 
-  const preparedOrder = await buildPreparedCartOrder(
+  if (
+    paymentMethod !== PAYMENT_METHODS.onlinePayment &&
+    paymentMethod !== PAYMENT_METHODS.emi
+  ) {
+    throw new ApiError(400, "Select a valid online payment method.");
+  }
+
+  const customer = await findUserById(userId);
+
+  if (!customer) {
+    throw new ApiError(404, "Customer not found.");
+  }
+
+  assertUserCanUsePaymentMethod(customer, paymentMethod);
+
+  let preparedOrder = await buildPreparedCartOrder(
     userId,
     payload,
-    "online_payment",
+    paymentMethod,
   );
 
   const paymentAttempt = await createPaymentAttempt({
@@ -415,7 +620,7 @@ const createCartCashfreeCheckout = async (userId, payload = {}) => {
     status: "created",
     amount: preparedOrder.pricing.total,
     currency: preparedOrder.pricing.currency,
-    paymentMethod: "online_payment",
+    paymentMethod,
     checkoutPayload: {
       userId,
       orderSource: preparedOrder.orderSource,
@@ -431,7 +636,7 @@ const createCartCashfreeCheckout = async (userId, payload = {}) => {
       orderItems: preparedOrder.orderItems,
       recommendedItems: [],
       billingDetails: preparedOrder.billingDetails,
-      paymentMethod: "online_payment",
+      paymentMethod,
       pricing: {
         ...preparedOrder.pricing,
         checkoutSource: preparedOrder.orderSource,
@@ -439,48 +644,94 @@ const createCartCashfreeCheckout = async (userId, payload = {}) => {
     },
     orderId: null,
     gateway: {
-      provider: "cashfree",
+      provider,
     },
   });
 
+  if (preparedOrder.appliedCoupon?.code) {
+    const reservationExpiresAt = new Date(
+      Date.now() + (env.paymentGateway.orderExpireAfterSeconds + 900) * 1000,
+    ).toISOString();
+    const reservedCoupon = await reserveCouponCode({
+      code: preparedOrder.appliedCoupon.code,
+      reservationReference: paymentAttempt.id,
+      userId,
+      reservationExpiresAt,
+    });
+
+    if (!reservedCoupon) {
+      await updatePaymentAttempt(paymentAttempt.id, {
+        status: "failed",
+        failureReason: "Coupon is unavailable right now. Refresh checkout and try again.",
+      });
+      throw buildCouponUnavailableError(
+        "Coupon is unavailable right now. Refresh checkout and try again.",
+      );
+    }
+
+    preparedOrder = {
+      ...preparedOrder,
+      appliedCoupon: {
+        ...preparedOrder.appliedCoupon,
+        reservationReference: paymentAttempt.id,
+      },
+    };
+
+    await updatePaymentAttempt(paymentAttempt.id, {
+      checkoutPayload: {
+        ...preparedOrder,
+      },
+    });
+  }
+
   try {
-    const returnUrl = buildCashfreeReturnUrl(
+    const returnUrl = buildPaymentReturnUrl(
       payload.returnPath,
       paymentAttempt.id,
       "/order-summary",
     );
-    const cashfreeOrder = await createRemoteCashfreeOrder({
-      order_id: paymentAttempt.id,
-      order_amount: Number(preparedOrder.pricing.total.toFixed(2)),
-      order_currency: preparedOrder.pricing.currency,
-      customer_details: {
-        customer_id: userId,
-        customer_name: preparedOrder.fullName,
-        customer_email: preparedOrder.email || undefined,
-        customer_phone: preparedOrder.phoneNumber,
+    const gatewayOrder = await createRemotePaymentOrder({
+      merchantOrderId: paymentAttempt.id,
+      amount: Math.round(Number(preparedOrder.pricing.total || 0) * 100),
+      currency: preparedOrder.pricing.currency,
+      customerId: userId,
+      customerName: preparedOrder.fullName,
+      customerEmail: preparedOrder.email,
+      customerPhone: preparedOrder.phoneNumber,
+      returnUrl,
+      description: `Checkout for ${preparedOrder.summary.itemCount} cart item(s)`,
+      expireAfter: env.paymentGateway.orderExpireAfterSeconds,
+      paymentFlow: {
+        type: "PG_CHECKOUT",
+        message: `Cart checkout for ${preparedOrder.summary.itemCount} cart item(s)`,
+        merchantUrls: {
+          redirectUrl: returnUrl,
+        },
       },
-      order_meta: {
-        return_url: returnUrl,
-        ...(env.cashfree.notifyUrl ? { notify_url: env.cashfree.notifyUrl } : {}),
+      disablePaymentRetry: false,
+      metaInfo: {
+        udf1: preparedOrder.orderSource,
+        udf2: paymentAttempt.id,
+        udf3: userId,
       },
-      order_note: `Cart checkout for ${preparedOrder.summary.itemCount} cart item(s)`,
-      order_tags: {
-        source: preparedOrder.orderSource,
-        payment_attempt_id: paymentAttempt.id,
-        user_id: userId,
+      prefillUserLoginDetails: {
+        phoneNumber: preparedOrder.phoneNumber,
       },
-    });
+    }, { provider });
 
     await updatePaymentAttempt(paymentAttempt.id, {
       status: "checkout_ready",
       gateway: {
-        provider: "cashfree",
-        orderId: cashfreeOrder.order_id,
-        cfOrderId: cashfreeOrder.cf_order_id,
-        amount: cashfreeOrder.order_amount,
-        currency: cashfreeOrder.order_currency,
-        paymentSessionId: cashfreeOrder.payment_session_id,
-        status: cashfreeOrder.order_status,
+        provider,
+        merchantOrderId: paymentAttempt.id,
+        gatewayOrderId: gatewayOrder.orderId,
+        redirectUrl: gatewayOrder.redirectUrl,
+        paymentSessionId: gatewayOrder.paymentSessionId || "",
+        amount: preparedOrder.pricing.total,
+        amountPaisa: gatewayOrder.amount || Math.round(Number(preparedOrder.pricing.total || 0) * 100),
+        currency: preparedOrder.pricing.currency,
+        status: gatewayOrder.state,
+        expiresAt: gatewayOrder.expireAt || null,
       },
     });
 
@@ -488,11 +739,13 @@ const createCartCashfreeCheckout = async (userId, payload = {}) => {
       paymentAttemptId: paymentAttempt.id,
       status: "checkout_ready",
       statusLabel: PAYMENT_STATUS_LABELS.checkout_ready,
-      paymentSessionId: cashfreeOrder.payment_session_id,
-      orderId: cashfreeOrder.order_id,
-      cfOrderId: cashfreeOrder.cf_order_id,
-      amount: cashfreeOrder.order_amount,
-      currency: cashfreeOrder.order_currency,
+      provider,
+      merchantOrderId: paymentAttempt.id,
+      gatewayOrderId: gatewayOrder.orderId,
+      redirectUrl: gatewayOrder.redirectUrl,
+      paymentSessionId: gatewayOrder.paymentSessionId || "",
+      amount: preparedOrder.pricing.total,
+      currency: preparedOrder.pricing.currency,
       businessName: "Grass Green Nursery",
       description: `Checkout for ${preparedOrder.summary.itemCount} cart item(s)`,
       prefill: {
@@ -500,11 +753,13 @@ const createCartCashfreeCheckout = async (userId, payload = {}) => {
         email: preparedOrder.email,
         contact: preparedOrder.phoneNumber,
       },
-      mode: env.cashfree.environment,
+      mode: env.paymentGateway.mode,
       returnUrl,
-      shouldSimulateWebhook: !env.cashfree.isWebhookConfigured,
     };
   } catch (error) {
+    if (preparedOrder.appliedCoupon?.reservationReference) {
+      await releaseCouponReservation(preparedOrder.appliedCoupon.reservationReference);
+    }
     await updatePaymentAttempt(paymentAttempt.id, {
       status: "failed",
       failureReason:
@@ -515,7 +770,7 @@ const createCartCashfreeCheckout = async (userId, payload = {}) => {
 };
 
 module.exports = {
-  createCartCashfreeCheckout,
+  createCartPaymentCheckout,
   placeCartOrderCashOnDelivery,
   previewCartCheckout,
 };

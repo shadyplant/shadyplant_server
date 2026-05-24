@@ -1,6 +1,10 @@
 const { query } = require("../config/postgres");
 const { generateId } = require("../utils/crypto");
 const { buildUpdateStatement } = require("../utils/sql");
+const {
+  DEFAULT_PAYMENT_ACCESS,
+  normalizeUserPaymentAccess,
+} = require("../services/user-account.service");
 
 const EMPTY_DELIVERY_ADDRESS = {
   formattedAddress: "",
@@ -20,6 +24,10 @@ const EMPTY_BILLING_DETAILS = {
   state: "",
   city: "",
   address: "",
+};
+
+const EMPTY_PAYMENT_ACCESS = {
+  ...DEFAULT_PAYMENT_ACCESS,
 };
 
 const mapUserRow = (row) => {
@@ -44,7 +52,19 @@ const mapUserRow = (row) => {
       ...EMPTY_BILLING_DETAILS,
       ...(row.billing_details || {}),
     },
+    paymentAccess: normalizeUserPaymentAccess({
+      ...EMPTY_PAYMENT_ACCESS,
+      ...(row.payment_access || {}),
+    }),
     isVerified: Boolean(row.is_verified),
+    isVip: Boolean(row.is_vip),
+    customerCategory: row.customer_category || "normal",
+    accountStatus: row.account_status || "active",
+    bannedUntil:
+      row.banned_until instanceof Date
+        ? row.banned_until.toISOString()
+        : row.banned_until || null,
+    banReason: row.ban_reason || "",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -68,8 +88,17 @@ const createUser = async (userData) => {
       ...EMPTY_BILLING_DETAILS,
       ...(userData.billingDetails || {}),
     },
+    paymentAccess: normalizeUserPaymentAccess({
+      ...EMPTY_PAYMENT_ACCESS,
+      ...(userData.paymentAccess || {}),
+    }),
     isVerified:
       typeof userData.isVerified === "boolean" ? userData.isVerified : false,
+    isVip: typeof userData.isVip === "boolean" ? userData.isVip : false,
+    customerCategory: userData.customerCategory || "normal",
+    accountStatus: userData.accountStatus || "active",
+    bannedUntil: userData.bannedUntil || null,
+    banReason: userData.banReason || "",
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -86,11 +115,17 @@ const createUser = async (userData) => {
       profile_image,
       delivery_address,
       billing_details,
+      payment_access,
       is_verified,
+      is_vip,
+      customer_category,
+      account_status,
+      banned_until,
+      ban_reason,
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, $12, $13
+      $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12, $13, $14, $15, $16, $17, $18, $19
     )`,
     [
       id,
@@ -103,7 +138,13 @@ const createUser = async (userData) => {
       user.profileImage,
       JSON.stringify(user.deliveryAddress),
       JSON.stringify(user.billingDetails),
+      JSON.stringify(user.paymentAccess),
       user.isVerified,
+      user.isVip,
+      user.customerCategory,
+      user.accountStatus,
+      user.bannedUntil,
+      user.banReason,
       user.createdAt,
       user.updatedAt,
     ],
@@ -182,6 +223,13 @@ const updateUser = async (id, updates) => {
           ...EMPTY_BILLING_DETAILS,
           ...(currentUser.billingDetails || {}),
         },
+    paymentAccess:
+      updates.paymentAccess !== undefined
+        ? normalizeUserPaymentAccess({
+            ...(currentUser.paymentAccess || EMPTY_PAYMENT_ACCESS),
+            ...updates.paymentAccess,
+          })
+        : normalizeUserPaymentAccess(currentUser.paymentAccess || EMPTY_PAYMENT_ACCESS),
     phoneNumber:
       updates.phoneNumber !== undefined
         ? updates.phoneNumber || null
@@ -200,7 +248,13 @@ const updateUser = async (id, updates) => {
       profileImage: nextUser.profileImage,
       deliveryAddress: JSON.stringify(nextUser.deliveryAddress),
       billingDetails: JSON.stringify(nextUser.billingDetails),
+      paymentAccess: JSON.stringify(nextUser.paymentAccess),
       isVerified: nextUser.isVerified,
+      isVip: nextUser.isVip,
+      customerCategory: nextUser.customerCategory,
+      accountStatus: nextUser.accountStatus,
+      bannedUntil: nextUser.bannedUntil,
+      banReason: nextUser.banReason,
       updatedAt: nextUser.updatedAt,
     },
     {
@@ -212,7 +266,13 @@ const updateUser = async (id, updates) => {
       profileImage: "profile_image",
       deliveryAddress: { column: "delivery_address", cast: "jsonb" },
       billingDetails: { column: "billing_details", cast: "jsonb" },
+      paymentAccess: { column: "payment_access", cast: "jsonb" },
       isVerified: "is_verified",
+      isVip: "is_vip",
+      customerCategory: "customer_category",
+      accountStatus: "account_status",
+      bannedUntil: "banned_until",
+      banReason: "ban_reason",
       updatedAt: "updated_at",
     },
   );
