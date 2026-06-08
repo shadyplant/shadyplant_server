@@ -61,6 +61,14 @@ const googleLogin = asyncHandler(async (req, res) => {
 
 const refresh = asyncHandler(async (req, res) => {
   const refreshToken = req.cookies[env.auth.cookieName];
+
+  if (!refreshToken) {
+    return res.status(200).json({
+      message: "No active session.",
+      data: null,
+    });
+  }
+
   const payload = await refreshAuthSession(refreshToken, getRequestContext(req));
   sendAuthResponse(res, 200, payload, "Session refreshed.");
 });
@@ -89,6 +97,14 @@ const me = asyncHandler(async (req, res) => {
 
 const sessionUser = asyncHandler(async (req, res) => {
   const refreshToken = req.cookies[env.auth.cookieName];
+
+  if (!refreshToken) {
+    return res.status(200).json({
+      message: "No active session.",
+      data: null,
+    });
+  }
+
   const user = await getCurrentUserFromRefreshToken(refreshToken);
 
   res.status(200).json({
