@@ -16,6 +16,18 @@ const hasConfiguredValue = (value) => {
   );
 };
 
+const isPlaceholderValue = (value) => {
+  const normalizedValue = String(value || "").trim().toLowerCase();
+
+  return (
+    !normalizedValue ||
+    normalizedValue.startsWith("replace-with-") ||
+    normalizedValue.includes("your-") ||
+    normalizedValue.includes("example.local") ||
+    normalizedValue.includes("example.com")
+  );
+};
+
 const getRequiredEnv = (name) => {
   const value = process.env[name];
   if (!value) {
@@ -222,6 +234,11 @@ const env = {
     url:
       process.env.POSTGRES_URL ||
       "postgres://postgres:postgres@localhost:5432/grass_green_nursery",
+    ssl: parseBoolean(process.env.POSTGRES_SSL, isProduction),
+    sslRejectUnauthorized: parseBoolean(
+      process.env.POSTGRES_SSL_REJECT_UNAUTHORIZED,
+      true,
+    ),
   },
   redis: {
     url: process.env.REDIS_URL || "redis://localhost:6379",
@@ -302,5 +319,114 @@ env.mailer.isEnabled = env.mailer.transport !== "disabled";
 env.mailer.hasSmtpCredentials = Boolean(env.mailer.user && env.mailer.pass);
 env.mailer.hasSmtpConfig = Boolean(env.mailer.host && env.mailer.port);
 env.productSync.isConfigured = hasConfiguredValue(env.productSync.bearerToken);
+
+const assertProductionReady = () => {
+  if (!env.isProduction) {
+    return;
+  }
+
+  const errors = [];
+  const requireRawEnv = (name) => {
+    if (!process.env[name] || isPlaceholderValue(process.env[name])) {
+      errors.push(`${name} must be set to a real production value.`);
+    }
+  };
+  const requireStrongSecret = (name) => {
+    const value = String(process.env[name] || "");
+    if (isPlaceholderValue(value) || value.length < 32) {
+      errors.push(`${name} must be at least 32 characters and not a placeholder.`);
+    }
+  };
+  const rejectLocalUrl = (name, value) => {
+    const normalizedValue = String(value || "").toLowerCase();
+    if (
+      normalizedValue.includes("localhost") ||
+      normalizedValue.includes("127.0.0.1") ||
+      normalizedValue.includes("@localhost")
+    ) {
+      errors.push(`${name} must not point to localhost in production.`);
+    }
+  };
+
+  requireStrongSecret("ACCESS_TOKEN_SECRET");
+  requireStrongSecret("REFRESH_TOKEN_SECRET");
+  requireStrongSecret("PASSWORD_RESET_TOKEN_SECRET");
+  if (env.auth.accessTokenSecret === env.auth.refreshTokenSecret) {
+    errors.push("ACCESS_TOKEN_SECRET and REFRESH_TOKEN_SECRET must be different.");
+  }
+
+  requireRawEnv("CLIENT_ORIGIN");
+  if (!env.clientOrigins.every((origin) => origin.startsWith("https://"))) {
+    errors.push("Every CLIENT_ORIGIN value must use https:// in production.");
+  }
+
+  requireRawEnv("SERVER_PUBLIC_BASE_URL");
+  if (!env.server.publicBaseUrl.startsWith("https://")) {
+    errors.push("SERVER_PUBLIC_BASE_URL must use https:// in production.");
+  }
+
+  requireRawEnv("POSTGRES_URL");
+  requireRawEnv("REDIS_URL");
+  requireRawEnv("MONGO_URI");
+  rejectLocalUrl("POSTGRES_URL", env.postgres.url);
+  rejectLocalUrl("REDIS_URL", env.redis.url);
+  rejectLocalUrl("MONGO_URI", env.mongo.uri);
+  if (!env.postgres.ssl) {
+    errors.push("POSTGRES_SSL must be true in production when connecting to RDS.");
+  }
+
+  if (!env.serverSecurity.trustProxy) {
+    errors.push("TRUST_PROXY must be true behind AWS load balancers/App Runner.");
+  }
+
+  if (!env.isFirebaseConfigured) {
+    errors.push(
+      "Firebase Admin must be configured with FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_PROJECT_ID/FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY.",
+    );
+  }
+  if (env.firebase.serviceAccountPath) {
+    errors.push(
+      "FIREBASE_SERVICE_ACCOUNT_PATH must not be used in production. Use FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_PROJECT_ID/FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY from a secret store.",
+    );
+  }
+  if (
+    env.firebase.serviceAccountJson &&
+    isPlaceholderValue(env.firebase.serviceAccountJson)
+  ) {
+    errors.push("FIREBASE_SERVICE_ACCOUNT_JSON must be a real service-account payload.");
+  }
+
+  if (!hasConfiguredValue(env.productSync.bearerToken)) {
+    errors.push("SYNC_PRODUCTS_BEARER_TOKEN must be set to a real production token.");
+  }
+
+  if (
+    env.paymentGateway.mode === "production" &&
+    !env.paymentGateway.isCheckoutConfigured
+  ) {
+    errors.push("A production payment gateway must be configured before accepting orders.");
+  }
+
+  if (env.mailer.isEnabled) {
+    if (!env.mailer.hasSmtpConfig) {
+      errors.push("MAILER_HOST and MAILER_PORT are required when mailer is enabled.");
+    }
+    if (!env.mailer.hasSmtpCredentials) {
+      errors.push("MAILER_USER and MAILER_PASS are required when mailer is enabled.");
+    }
+  }
+
+  if (env.staff.bootstrapOwnerPassword && env.staff.bootstrapOwnerPassword.length < 12) {
+    errors.push("STAFF_BOOTSTRAP_OWNER_PASSWORD must be at least 12 characters when set.");
+  }
+
+  if (errors.length) {
+    throw new Error(
+      `Production configuration is not ready:\n- ${errors.join("\n- ")}`,
+    );
+  }
+};
+
+assertProductionReady();
 
 module.exports = { env };

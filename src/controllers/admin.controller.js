@@ -418,15 +418,15 @@ const deleteReviewForAdmin = asyncHandler(async (req, res) => {
 });
 
 const listOrdersForAdmin = asyncHandler(async (req, res) => {
-  const orders = await listAdminOrders();
+  const payload = await listAdminOrders(req.query);
   res.status(200).json({
     message: "Admin orders fetched successfully.",
-    data: { orders },
+    data: payload,
   });
 });
 
 const listTransactionsForAdmin = asyncHandler(async (req, res) => {
-  const payload = await listAdminTransactions();
+  const payload = await listAdminTransactions(req.query);
   res.status(200).json({
     message: "Admin transactions fetched successfully.",
     data: payload,
@@ -434,7 +434,7 @@ const listTransactionsForAdmin = asyncHandler(async (req, res) => {
 });
 
 const listSalesReportForAdmin = asyncHandler(async (req, res) => {
-  const payload = await listAdminSalesReport();
+  const payload = await listAdminSalesReport(req.query);
   res.status(200).json({
     message: "Admin sales report fetched successfully.",
     data: payload,

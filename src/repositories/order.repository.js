@@ -1,6 +1,39 @@
 const { query } = require("../config/postgres");
 const { generateId } = require("../utils/crypto");
 const { buildUpdateStatement } = require("../utils/sql");
+
+const parsePositiveInteger = (value) => {
+  const parsedValue = Number.parseInt(value ?? "", 10);
+
+  if (!Number.isFinite(parsedValue) || parsedValue < 0) {
+    return null;
+  }
+
+  return parsedValue;
+};
+
+const buildOrderFilters = (options = {}, values = []) => {
+  const clauses = [];
+  const from = options.from ? new Date(options.from) : null;
+  const to = options.to ? new Date(options.to) : null;
+
+  if (options.userId) {
+    values.push(options.userId);
+    clauses.push(`user_id = $${values.length}`);
+  }
+
+  if (from && !Number.isNaN(from.getTime())) {
+    values.push(from);
+    clauses.push(`created_at >= $${values.length}`);
+  }
+
+  if (to && !Number.isNaN(to.getTime())) {
+    values.push(to);
+    clauses.push(`created_at <= $${values.length}`);
+  }
+
+  return clauses;
+};
 const mapOrderRow = (row) => {
   if (!row) {
     return null;
@@ -50,11 +83,12 @@ const mapOrderRow = (row) => {
 const createOrder = async (orderData) => {
   const id = generateId();
   const year = new Date().getFullYear();
-  const uniqueSuffix = Date.now().toString().slice(-6);
+  const uniqueSuffix = generateId().replace(/-/g, "").slice(0, 10).toUpperCase();
+  const trackingSuffix = generateId().replace(/-/g, "").slice(0, 12).toUpperCase();
 
   const order = {
     orderNumber: `GGN-${year}-${uniqueSuffix}`,
-    trackingCode: `TRK-${Date.now().toString().slice(-8)}`,
+    trackingCode: `TRK-${trackingSuffix}`,
     ...orderData,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -134,12 +168,39 @@ const createOrder = async (orderData) => {
   };
 };
 
-const listOrdersByUserId = async (userId) => {
-  const result = await query(
-    "SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC",
-    [userId],
+const listOrdersByUserId = async (userId, options = {}) => {
+  const values = [];
+  const clauses = buildOrderFilters({ ...options, userId }, values);
+  const limit = parsePositiveInteger(options.limit);
+  const offset = parsePositiveInteger(options.offset);
+  const whereClause = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const countResult = await query(
+    `SELECT COUNT(*)::int AS total_count FROM orders ${whereClause}`,
+    values,
   );
-  return result.rows.map(mapOrderRow).filter(Boolean);
+  const totalCount = Number(countResult.rows[0]?.total_count || 0);
+  const dataValues = [...values];
+  let sql = `SELECT *
+             FROM orders
+             ${whereClause}
+             ORDER BY created_at DESC`;
+
+  if (limit !== null) {
+    dataValues.push(limit);
+    sql += ` LIMIT $${dataValues.length}`;
+  }
+
+  if (offset !== null) {
+    dataValues.push(offset);
+    sql += ` OFFSET $${dataValues.length}`;
+  }
+
+  const result = await query(sql, dataValues);
+
+  return {
+    rows: result.rows.map(mapOrderRow).filter(Boolean),
+    totalCount,
+  };
 };
 
 const findOrderById = async (orderId) => {
@@ -163,13 +224,40 @@ const findOrderByPaymentReference = async (paymentReference) => {
   return mapOrderRow(result.rows[0]);
 };
 
-const listAllOrders = async () => {
-  const result = await query(
-    "SELECT * FROM orders ORDER BY created_at DESC",
-    [],
+const listAllOrders = async (options = {}) => {
+  const values = [];
+  const clauses = buildOrderFilters(options, values);
+  const limit = parsePositiveInteger(options.limit);
+  const offset = parsePositiveInteger(options.offset);
+  const whereClause = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const countResult = await query(
+    `SELECT COUNT(*)::int AS total_count FROM orders ${whereClause}`,
+    values,
   );
+  const totalCount = Number(countResult.rows[0]?.total_count || 0);
+  const dataValues = [...values];
+  let sql = `SELECT *
+             FROM orders
+             ${whereClause}`;
 
-  return result.rows.map(mapOrderRow).filter(Boolean);
+  sql += " ORDER BY created_at DESC";
+
+  if (limit !== null) {
+    dataValues.push(limit);
+    sql += ` LIMIT $${dataValues.length}`;
+  }
+
+  if (offset !== null) {
+    dataValues.push(offset);
+    sql += ` OFFSET $${dataValues.length}`;
+  }
+
+  const result = await query(sql, dataValues);
+
+  return {
+    rows: result.rows.map(mapOrderRow).filter(Boolean),
+    totalCount,
+  };
 };
 
 const updateOrder = async (orderId, updates) => {

@@ -1,4 +1,19 @@
 node_modules
 .env
-.env.example
+.env.*
+env
+!.env.example
+!.env.production.example
+
+# Firebase/Admin SDK and other private key material must be provided via secrets.
+*-firebase-adminsdk-*.json
+*firebase-adminsdk*.json
 grass-green-nursery-1-firebase-adminsdk-fbsvc-e3aa6f4442.json
+service-account*.json
+*.pem
+*.key
+*.p12
+
+# Local logs and runtime output.
+*.log
+.server-start.*.log

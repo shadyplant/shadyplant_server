@@ -1,4 +1,5 @@
 const { ApiError } = require("../utils/apiError");
+const { env } = require("../config/env");
 
 const notFoundHandler = (req, res, next) => {
   next(new ApiError(404, `Route not found: ${req.method} ${req.originalUrl}`));
@@ -32,7 +33,14 @@ const errorHandler = (error, req, res, next) => {
       : error.message || "Request failed.";
 
   if (statusCode >= 500) {
-    console.error(error);
+    console.error("[API] Unhandled server error", {
+      method: req.method,
+      url: req.originalUrl,
+      statusCode,
+      name: error?.name || "Error",
+      message: error?.message || "Unexpected error",
+      stack: env.isDevelopment ? error?.stack : undefined,
+    });
   }
 
   res.status(statusCode).json({

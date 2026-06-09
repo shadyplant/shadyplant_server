@@ -33,7 +33,7 @@ The repository includes a root [docker-compose.yml](/d:/ProductionApplication/Gr
 - `redis`
 - `mongo`
 
-PostgreSQL schema bootstraps from [docker/postgres/init/001_schema.sql](/d:/ProductionApplication/GrassPlant/grass_green_nursery_server/docker/postgres/init/001_schema.sql:1).
+PostgreSQL schema is managed by the boot-time migration ledger. The base schema is in [docker/postgres/init/001_schema.sql](/d:/ProductionApplication/GrassPlant/grass_green_nursery_server/docker/postgres/init/001_schema.sql:1), and additional migrations live in `docker/postgres/migrations`.
 
 ### Commands
 
@@ -61,3 +61,4 @@ MONGO_URI=mongodb://localhost:27017/grass_green_nursery
 - Cart and wishlist now persist per authenticated user in Redis.
 - Elasticsearch and BigQuery are not part of the current local implementation.
 - The server now checks PostgreSQL, Redis, and MongoDB connectivity during startup.
+- Use `npm run db:migrate` if you want to apply the Postgres migrations manually without starting the API.

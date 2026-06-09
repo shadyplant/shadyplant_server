@@ -16,11 +16,11 @@ const createOrder = asyncHandler(async (req, res) => {
 });
 
 const listOrders = asyncHandler(async (req, res) => {
-  const orders = await listUserOrders(req.auth.userId);
+  const payload = await listUserOrders(req.auth.userId, req.query);
 
   res.status(200).json({
     message: "Orders fetched successfully.",
-    data: { orders },
+    data: payload,
   });
 });
 

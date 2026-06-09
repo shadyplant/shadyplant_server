@@ -53,6 +53,8 @@ const PAYMENT_STATUS_LABELS = {
   awaiting_confirmation: "Awaiting confirmation",
   refunded: "Refunded",
 };
+const DEFAULT_ORDER_LIST_LIMIT = 50;
+const MAX_ORDER_LIST_LIMIT = 100;
 const ORDER_CANCELLATION_REASONS = {
   poor_plant_health: "Poor Plant Health",
   extreme_weather_conditions: "Extreme Weather Conditions",
@@ -270,6 +272,30 @@ const buildPaymentDetailsWithRefundRequest = (order = {}, refundRequest = null) 
 
   return nextPaymentDetails;
 };
+
+const normalizeListPagination = (payload = {}, defaultLimit = DEFAULT_ORDER_LIST_LIMIT) => {
+  const requestedLimit = Number.parseInt(payload.limit ?? "", 10);
+  const requestedOffset = Number.parseInt(payload.offset ?? "", 10);
+
+  const limit =
+    Number.isFinite(requestedLimit) && requestedLimit > 0
+      ? Math.min(requestedLimit, MAX_ORDER_LIST_LIMIT)
+      : defaultLimit;
+
+  const offset = Number.isFinite(requestedOffset) && requestedOffset > 0
+    ? requestedOffset
+    : 0;
+
+  return { limit, offset };
+};
+
+const buildPaginationMetadata = (pagination, totalCount) => ({
+  limit: pagination.limit,
+  offset: pagination.offset,
+  totalCount,
+  totalPages: totalCount > 0 ? Math.ceil(totalCount / pagination.limit) : 0,
+  hasNextPage: pagination.offset + pagination.limit < totalCount,
+});
 
 const buildOrderItemSummary = (order = {}) => {
   const orderItems = Array.isArray(order.orderItems) ? order.orderItems : [];
@@ -755,10 +781,15 @@ const createUserOrder = async (userId, payload) => {
   });
 };
 
-const listUserOrders = async (userId) =>
-  (await listOrdersByUserId(userId))
-    .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
-    .map(serializeOrder);
+const listUserOrders = async (userId, payload = {}) => {
+  const pagination = normalizeListPagination(payload);
+  const result = await listOrdersByUserId(userId, pagination);
+
+  return {
+    orders: result.rows.map(serializeOrder),
+    pagination: buildPaginationMetadata(pagination, result.totalCount),
+  };
+};
 
 const getUserOrder = async (userId, orderId) => {
   const order = await findOrderById(orderId);

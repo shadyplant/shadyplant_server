@@ -1,7 +1,6 @@
-const fs = require("fs/promises");
-const path = require("path");
 const { Pool } = require("pg");
 const { env } = require("./env");
+const { runPostgresMigrations } = require("./postgres-migrations");
 
 let pool;
 
@@ -9,30 +8,21 @@ const getPostgresPool = () => {
   if (!pool) {
     pool = new Pool({
       connectionString: env.postgres.url,
+      ssl: env.postgres.ssl
+        ? {
+            rejectUnauthorized: env.postgres.sslRejectUnauthorized,
+          }
+        : false,
     });
   }
 
   return pool;
 };
 
-const applySchema = async () => {
-  const schemaPath = path.resolve(
-    __dirname,
-    "..",
-    "..",
-    "docker",
-    "postgres",
-    "init",
-    "001_schema.sql",
-  );
-  const schemaSql = await fs.readFile(schemaPath, "utf8");
-  await getPostgresPool().query(schemaSql);
-};
-
 const initializePostgres = async () => {
   const activePool = getPostgresPool();
   await activePool.query("SELECT 1");
-  await applySchema();
+  await runPostgresMigrations();
   return activePool;
 };
 

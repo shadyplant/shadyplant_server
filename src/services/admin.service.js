@@ -163,6 +163,8 @@ const PAYMENT_ATTEMPT_STATUS_LABELS = {
 };
 const SAMPLE_COUPON_PRODUCT_TOTAL = 2000;
 const SAMPLE_COUPON_DELIVERY_CHARGE = 250;
+const DEFAULT_ADMIN_ORDER_LIST_LIMIT = 100;
+const MAX_ADMIN_ORDER_LIST_LIMIT = 200;
 const STOCK_ADJUSTMENT_REASON_RULES = {
   add: new Set(["received", "audit_found", "return_restock", "manual_correction"]),
   adjust: new Set(["audit_correction", "damaged", "expired", "shrinkage", "manual_correction"]),
@@ -464,6 +466,32 @@ const buildOrderTransaction = (order, paymentAttempt = null) => {
     createdAt: order.createdAt,
     processedAt: paymentAttempt?.processedAt || capturedAt || null,
     updatedAt: paymentAttempt?.updatedAt || order.updatedAt || order.createdAt,
+  };
+};
+
+const normalizeAdminPagination = (payload = {}) => {
+  const requestedLimit = Number.parseInt(payload.limit ?? "", 10);
+  const requestedOffset = Number.parseInt(payload.offset ?? "", 10);
+
+  const limit =
+    Number.isFinite(requestedLimit) && requestedLimit > 0
+      ? Math.min(requestedLimit, MAX_ADMIN_ORDER_LIST_LIMIT)
+      : DEFAULT_ADMIN_ORDER_LIST_LIMIT;
+
+  const offset = Number.isFinite(requestedOffset) && requestedOffset > 0
+    ? requestedOffset
+    : 0;
+
+  return { limit, offset };
+};
+
+const normalizeDateRange = (payload = {}) => {
+  const from = payload.from ? new Date(payload.from) : null;
+  const to = payload.to ? new Date(payload.to) : null;
+
+  return {
+    from: from && !Number.isNaN(from.getTime()) ? from.toISOString() : undefined,
+    to: to && !Number.isNaN(to.getTime()) ? to.toISOString() : undefined,
   };
 };
 
@@ -1387,14 +1415,30 @@ const deleteAdminReview = async (reviewId) => {
   return review;
 };
 
-const listAdminOrders = async () => (await listAllOrders()).map(serializeOrder);
+const listAdminOrders = async (payload = {}) => {
+  const pagination = normalizeAdminPagination(payload);
+  const { rows, totalCount } = await listAllOrders(pagination);
 
-const listAdminTransactions = async () => {
-  const [orders, paymentAttempts] = await Promise.all([
-    listAllOrders(),
-    listAllPaymentAttempts(),
+  return {
+    orders: rows.map(serializeOrder),
+    pagination: {
+      limit: pagination.limit,
+      offset: pagination.offset,
+      totalCount,
+      totalPages: totalCount > 0 ? Math.ceil(totalCount / pagination.limit) : 0,
+      hasNextPage: pagination.offset + pagination.limit < totalCount,
+    },
+  };
+};
+
+const listAdminTransactions = async (payload = {}) => {
+  const dateRange = normalizeDateRange(payload);
+  const [orderResult, paymentAttemptResult] = await Promise.all([
+    listAllOrders(dateRange),
+    listAllPaymentAttempts(dateRange),
   ]);
-  const serializedOrders = orders.map(serializeOrder);
+  const serializedOrders = orderResult.rows.map(serializeOrder);
+  const paymentAttempts = paymentAttemptResult.rows;
   const latestPaymentAttemptByOrderId = new Map();
 
   for (const paymentAttempt of paymentAttempts) {
@@ -1479,12 +1523,14 @@ const listAdminTransactions = async () => {
   };
 };
 
-const listAdminSalesReport = async () => {
-  const [orders, paymentAttempts] = await Promise.all([
-    listAllOrders(),
-    listAllPaymentAttempts(),
+const listAdminSalesReport = async (payload = {}) => {
+  const dateRange = normalizeDateRange(payload);
+  const [orderResult, paymentAttemptResult] = await Promise.all([
+    listAllOrders(dateRange),
+    listAllPaymentAttempts(dateRange),
   ]);
-  const serializedOrders = orders.map(serializeOrder);
+  const serializedOrders = orderResult.rows.map(serializeOrder);
+  const paymentAttempts = paymentAttemptResult.rows;
   const latestPaymentAttemptByOrderId = new Map();
 
   for (const paymentAttempt of paymentAttempts) {

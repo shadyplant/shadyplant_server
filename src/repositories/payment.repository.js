@@ -2,6 +2,34 @@ const { query } = require("../config/postgres");
 const { generateId } = require("../utils/crypto");
 const { buildUpdateStatement } = require("../utils/sql");
 
+const parsePositiveInteger = (value) => {
+  const parsedValue = Number.parseInt(value ?? "", 10);
+
+  if (!Number.isFinite(parsedValue) || parsedValue < 0) {
+    return null;
+  }
+
+  return parsedValue;
+};
+
+const buildPaymentAttemptFilters = (options = {}, values = []) => {
+  const clauses = [];
+  const from = options.from ? new Date(options.from) : null;
+  const to = options.to ? new Date(options.to) : null;
+
+  if (from && !Number.isNaN(from.getTime())) {
+    values.push(from);
+    clauses.push(`created_at >= $${values.length}`);
+  }
+
+  if (to && !Number.isNaN(to.getTime())) {
+    values.push(to);
+    clauses.push(`created_at <= $${values.length}`);
+  }
+
+  return clauses;
+};
+
 const mapPaymentAttemptRow = (row) => {
   if (!row) {
     return null;
@@ -109,13 +137,39 @@ const findPaymentAttemptByGatewayOrderId = async (gatewayOrderId) => {
   return mapPaymentAttemptRow(result.rows[0]);
 };
 
-const listAllPaymentAttempts = async () => {
-  const result = await query(
-    "SELECT * FROM payment_attempts ORDER BY created_at DESC",
-    [],
+const listAllPaymentAttempts = async (options = {}) => {
+  const values = [];
+  const clauses = buildPaymentAttemptFilters(options, values);
+  const limit = parsePositiveInteger(options.limit);
+  const offset = parsePositiveInteger(options.offset);
+  const whereClause = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const countResult = await query(
+    `SELECT COUNT(*)::int AS total_count FROM payment_attempts ${whereClause}`,
+    values,
   );
+  const totalCount = Number(countResult.rows[0]?.total_count || 0);
+  const dataValues = [...values];
+  let sql = `SELECT *
+             FROM payment_attempts
+             ${whereClause}
+             ORDER BY created_at DESC`;
 
-  return result.rows.map(mapPaymentAttemptRow).filter(Boolean);
+  if (limit !== null) {
+    dataValues.push(limit);
+    sql += ` LIMIT $${dataValues.length}`;
+  }
+
+  if (offset !== null) {
+    dataValues.push(offset);
+    sql += ` OFFSET $${dataValues.length}`;
+  }
+
+  const result = await query(sql, dataValues);
+
+  return {
+    rows: result.rows.map(mapPaymentAttemptRow).filter(Boolean),
+    totalCount,
+  };
 };
 
 const updatePaymentAttempt = async (paymentAttemptId, updates) => {
