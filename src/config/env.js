@@ -1,7 +1,16 @@
 const dotenv = require("dotenv");
+const fs = require("fs");
 const path = require("path");
 
-dotenv.config();
+const loadEnvFile = (fileName) => {
+  const filePath = path.resolve(process.cwd(), fileName);
+  if (fs.existsSync(filePath)) {
+    dotenv.config({ path: filePath, override: fileName === ".env.local" });
+  }
+};
+
+loadEnvFile(".env.local");
+loadEnvFile(".env");
 
 const nodeEnv = process.env.NODE_ENV || "development";
 const isProduction = nodeEnv === "production";
@@ -85,9 +94,78 @@ const parseDurationToMs = (value, fallback) => {
   return amount * multipliers[unit];
 };
 
-const normalizedPrivateKey = process.env.FIREBASE_PRIVATE_KEY
-  ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n")
-  : "";
+const normalizePostgresUrl = (value) => {
+  const normalizedValue = String(value || "").trim();
+
+  if (normalizedValue.startsWith("POSTGRES_URL=")) {
+    return normalizedValue.replace(/^POSTGRES_URL=/i, "").trim();
+  }
+
+  return normalizedValue;
+};
+
+const normalizeRedisUrl = (value) => {
+  const normalizedValue = String(value || "").trim();
+
+  if (normalizedValue.startsWith("REDIS_URL=")) {
+    return normalizedValue.replace(/^REDIS_URL=/i, "").trim();
+  }
+
+  return normalizedValue;
+};
+
+const isLocalhostUrl = (value) => {
+  const normalizedValue = String(value || "").toLowerCase();
+
+  return (
+    normalizedValue.includes("localhost") ||
+    normalizedValue.includes("127.0.0.1") ||
+    normalizedValue.includes("@localhost")
+  );
+};
+
+const normalizeFirebaseServiceAccount = (value) =>
+  String(value || "").trim();
+
+const parseFirebaseServiceAccount = (value) => {
+  const normalizedValue = normalizeFirebaseServiceAccount(value);
+
+  if (!normalizedValue) {
+    return null;
+  }
+
+  if (normalizedValue.startsWith("{") || normalizedValue.startsWith("[")) {
+    try {
+      return JSON.parse(normalizedValue);
+    } catch {
+      return null;
+    }
+  }
+
+  const resolvedPath = path.resolve(process.cwd(), normalizedValue);
+  if (fs.existsSync(resolvedPath)) {
+    try {
+      return JSON.parse(fs.readFileSync(resolvedPath, "utf8"));
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    return JSON.parse(normalizedValue);
+  } catch {
+    try {
+      const decodedJson = Buffer.from(normalizedValue, "base64").toString("utf8");
+      return JSON.parse(decodedJson);
+    } catch {
+      return null;
+    }
+  }
+};
+
+const firebaseServiceAccount = parseFirebaseServiceAccount(
+  process.env.FIREBASE_SERVICE_ACCOUNT,
+);
 
 const auth = {
   accessTokenSecret: getRequiredEnv("ACCESS_TOKEN_SECRET"),
@@ -119,10 +197,6 @@ const env = {
   appName: String(process.env.APP_NAME || "Grass Green Nursery").trim(),
   port: parseInteger(process.env.PORT, 8080),
   nodeEnv,
-  clientOrigins: getRequiredEnv("CLIENT_ORIGIN")
-    .split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean),
   auth,
   staff: {
     accessTokenSecret:
@@ -158,18 +232,32 @@ const env = {
     ),
   },
   firebase: {
-    projectId: process.env.FIREBASE_PROJECT_ID || "",
-    clientEmail: process.env.FIREBASE_CLIENT_EMAIL || "",
-    privateKey: normalizedPrivateKey,
-    serviceAccountPath: process.env.FIREBASE_SERVICE_ACCOUNT_PATH
-      ? path.resolve(process.cwd(), process.env.FIREBASE_SERVICE_ACCOUNT_PATH)
-      : "",
-    serviceAccountJson: process.env.FIREBASE_SERVICE_ACCOUNT_JSON || "",
+    serviceAccount: normalizeFirebaseServiceAccount(
+      process.env.FIREBASE_SERVICE_ACCOUNT,
+    ),
+    projectId: String(
+      firebaseServiceAccount?.project_id ||
+        firebaseServiceAccount?.projectId ||
+        "",
+    ).trim(),
+    clientEmail: String(
+      firebaseServiceAccount?.client_email ||
+        firebaseServiceAccount?.clientEmail ||
+        "",
+    ).trim(),
+    privateKey: String(firebaseServiceAccount?.private_key || "")
+      .replace(/\\n/g, "\n")
+      .trim(),
   },
   googleAuth: {
     requiredHostedDomain: String(
       process.env.GOOGLE_REQUIRED_HOSTED_DOMAIN || "",
     ).trim().toLowerCase(),
+  },
+  chatbot: {
+    identitySecret: String(
+      process.env.CHATBOT_IDENTITY_SECRET || "",
+    ).trim(),
   },
   googleMaps: {
     serverApiKey: String(
@@ -177,6 +265,13 @@ const env = {
         process.env.GOOGLE_API_KEY ||
         "",
     ).trim(),
+  },
+  awsS3: {
+    bucketName: String(process.env.AWS_S3_BUCKET_NAME || "").trim(),
+    region: String(process.env.AWS_S3_REGION || "").trim(),
+    accessKeyId: String(process.env.AWS_S3_ACCESS_KEY_ID || "").trim(),
+    secretAccessKey: String(process.env.AWS_S3_SECRET_ACCESS_KEY || "").trim(),
+    cdnBaseUrl: String(process.env.AWS_S3_CDN_BASE_URL || "").trim(),
   },
   server: {
     publicBaseUrl: String(process.env.SERVER_PUBLIC_BASE_URL || "").trim(),
@@ -199,6 +294,21 @@ const env = {
     secure: parseBoolean(process.env.MAILER_SECURE, false),
     user: String(process.env.MAILER_USER || "").trim(),
     pass: String(process.env.MAILER_PASS || "").trim(),
+  },
+  openrouter: {
+    apiKey: String(process.env.OPENROUTER_API_KEY || "").trim(),
+    model: String(
+      process.env.OPENROUTER_MODEL ||
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+    ).trim(),
+    baseUrl: String(
+      process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
+    ).trim(),
+    siteUrl: String(
+      process.env.OPENROUTER_SITE_URL ||
+        process.env.SERVER_PUBLIC_BASE_URL ||
+        "",
+    ).trim(),
   },
   paymentGateway: {
     provider: String(process.env.PAYMENT_GATEWAY_PROVIDER || "phonepe")
@@ -232,7 +342,7 @@ const env = {
   },
   postgres: {
     url:
-      process.env.POSTGRES_URL ||
+      normalizePostgresUrl(process.env.POSTGRES_URL) ||
       "postgres://postgres:postgres@localhost:5432/grass_green_nursery",
     ssl: parseBoolean(process.env.POSTGRES_SSL, isProduction),
     sslRejectUnauthorized: parseBoolean(
@@ -241,7 +351,7 @@ const env = {
     ),
   },
   redis: {
-    url: process.env.REDIS_URL || "redis://localhost:6379",
+    url: normalizeRedisUrl(process.env.REDIS_URL),
   },
   productSync: {
     bearerToken: String(process.env.SYNC_PRODUCTS_BEARER_TOKEN || "").trim(),
@@ -266,8 +376,8 @@ const env = {
       process.env.MONGO_URI || "mongodb://localhost:27017/grass_green_nursery",
   },
   delivery: {
-    originLat: parseFloatNumber(process.env.DELIVERY_ORIGIN_LAT, 25.5138),
-    originLng: parseFloatNumber(process.env.DELIVERY_ORIGIN_LNG, 90.2142),
+    originLat: parseFloatNumber(process.env.DELIVERY_ORIGIN_LAT, 26.327975),
+    originLng: parseFloatNumber(process.env.DELIVERY_ORIGIN_LNG, 90.838204),
     quoteTtlMinutes: parseInteger(process.env.CHECKOUT_QUOTE_TTL_MINUTES, 15),
     cartDeliveryOffsetDays: parseInteger(process.env.CART_DELIVERY_OFFSET_DAYS, 5),
   },
@@ -276,14 +386,27 @@ const env = {
   },
 };
 
+const configuredClientOrigins = getRequiredEnv("CLIENT_ORIGIN")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+env.clientOrigins = Array.from(
+  new Set([
+    ...configuredClientOrigins,
+    ...(isDevelopment
+      ? ["http://localhost:3000", "http://127.0.0.1:3000"]
+      : []),
+  ]),
+);
+
 env.isProduction = isProduction;
 env.isDevelopment = isDevelopment;
 env.isFirebaseConfigured = Boolean(
-  env.firebase.serviceAccountPath ||
-    env.firebase.serviceAccountJson ||
-    (env.firebase.projectId &&
-      env.firebase.clientEmail &&
-      env.firebase.privateKey),
+  env.firebase.serviceAccount &&
+    env.firebase.projectId &&
+    env.firebase.clientEmail &&
+    env.firebase.privateKey,
 );
 env.paymentGateway.mode =
   env.paymentGateway.mode === "production" ? "production" : "sandbox";
@@ -318,7 +441,9 @@ env.paymentGateway.isConfigured = env.paymentGateway.isCheckoutConfigured;
 env.mailer.isEnabled = env.mailer.transport !== "disabled";
 env.mailer.hasSmtpCredentials = Boolean(env.mailer.user && env.mailer.pass);
 env.mailer.hasSmtpConfig = Boolean(env.mailer.host && env.mailer.port);
+env.openrouter.isConfigured = Boolean(env.openrouter.apiKey && env.openrouter.model);
 env.productSync.isConfigured = hasConfiguredValue(env.productSync.bearerToken);
+env.redis.isConfigured = Boolean(env.redis.url) && !isLocalhostUrl(env.redis.url);
 
 const assertProductionReady = () => {
   if (!env.isProduction) {
@@ -366,10 +491,8 @@ const assertProductionReady = () => {
   }
 
   requireRawEnv("POSTGRES_URL");
-  requireRawEnv("REDIS_URL");
   requireRawEnv("MONGO_URI");
   rejectLocalUrl("POSTGRES_URL", env.postgres.url);
-  rejectLocalUrl("REDIS_URL", env.redis.url);
   rejectLocalUrl("MONGO_URI", env.mongo.uri);
   if (!env.postgres.ssl) {
     errors.push("POSTGRES_SSL must be true in production when connecting to RDS.");
@@ -381,19 +504,11 @@ const assertProductionReady = () => {
 
   if (!env.isFirebaseConfigured) {
     errors.push(
-      "Firebase Admin must be configured with FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_PROJECT_ID/FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY.",
+      "Firebase Admin must be configured with FIREBASE_SERVICE_ACCOUNT.",
     );
   }
-  if (env.firebase.serviceAccountPath) {
-    errors.push(
-      "FIREBASE_SERVICE_ACCOUNT_PATH must not be used in production. Use FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_PROJECT_ID/FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY from a secret store.",
-    );
-  }
-  if (
-    env.firebase.serviceAccountJson &&
-    isPlaceholderValue(env.firebase.serviceAccountJson)
-  ) {
-    errors.push("FIREBASE_SERVICE_ACCOUNT_JSON must be a real service-account payload.");
+  if (env.firebase.serviceAccount && isPlaceholderValue(env.firebase.serviceAccount)) {
+    errors.push("FIREBASE_SERVICE_ACCOUNT must be a real service-account path or JSON payload.");
   }
 
   if (!hasConfiguredValue(env.productSync.bearerToken)) {
@@ -416,8 +531,29 @@ const assertProductionReady = () => {
     }
   }
 
+  if (
+    env.awsS3.bucketName ||
+    env.awsS3.region ||
+    env.awsS3.accessKeyId ||
+    env.awsS3.secretAccessKey ||
+    env.awsS3.cdnBaseUrl
+  ) {
+    if (!env.awsS3.bucketName || !env.awsS3.region || !env.awsS3.accessKeyId || !env.awsS3.secretAccessKey) {
+      errors.push(
+        "AWS_S3_BUCKET_NAME, AWS_S3_REGION, AWS_S3_ACCESS_KEY_ID, and AWS_S3_SECRET_ACCESS_KEY must all be configured together when S3 uploads are enabled.",
+      );
+    }
+    if (env.awsS3.cdnBaseUrl && !env.awsS3.cdnBaseUrl.startsWith("https://")) {
+      errors.push("AWS_S3_CDN_BASE_URL must use https:// in production.");
+    }
+  }
+
   if (env.staff.bootstrapOwnerPassword && env.staff.bootstrapOwnerPassword.length < 12) {
     errors.push("STAFF_BOOTSTRAP_OWNER_PASSWORD must be at least 12 characters when set.");
+  }
+
+  if (env.chatbot.identitySecret && env.chatbot.identitySecret.length < 32) {
+    errors.push("CHATBOT_IDENTITY_SECRET must be at least 32 characters when set.");
   }
 
   if (errors.length) {

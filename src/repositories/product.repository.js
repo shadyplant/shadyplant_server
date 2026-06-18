@@ -457,6 +457,7 @@ const prepareProductForStorage = (product = {}) => {
         ? "inactive"
         : "active",
     images: normalizeProductImages(product),
+    usesImages: normalizeProductUsesImages(product),
     videoClips: normalizeProductVideoClips({ ...product, id }),
     optionGroups: normalizeProductOptionGroups(product),
     detailSections: normalizeProductDetailSections(product),
@@ -473,6 +474,13 @@ const normalizeProductImages = (product = {}) => {
     .map((image) => String(image || "").trim())
     .filter(Boolean))];
 };
+
+const normalizeProductUsesImages = (product = {}) =>
+  [...new Set(
+    (Array.isArray(product.usesImages) ? product.usesImages : [])
+      .map((image) => String(image || "").trim())
+      .filter(Boolean),
+  )];
 
 const normalizeProductVideoClip = (
   clip = {},
@@ -556,6 +564,7 @@ const serializeProduct = (product) => {
         : "active",
     image: images[0] || "",
     images,
+    usesImages: normalizeProductUsesImages(product),
     tags,
     videoClips: normalizeProductVideoClips(product),
     optionGroups: normalizeProductOptionGroups(product),
@@ -693,11 +702,27 @@ const updateProduct = async (productLookupId, updates = {}) => {
     return null;
   }
 
+  console.log("[product.repository] updateProduct start", {
+    productLookupId,
+    updateKeys: Object.keys(updates || {}),
+    image: updates.image,
+    imagesCount: Array.isArray(updates.images) ? updates.images.length : undefined,
+    usesImagesCount: Array.isArray(updates.usesImages) ? updates.usesImages.length : undefined,
+  });
+
   const nextData = {
     ...existingProduct.toObject(),
     ...updates,
   };
   const nextImages = normalizeProductImages(nextData);
+  const nextUsesImages = normalizeProductUsesImages(nextData);
+
+  console.log("[product.repository] updateProduct normalized", {
+    productLookupId,
+    nextImage: nextImages[0] || "",
+    nextImagesCount: nextImages.length,
+    nextUsesImagesCount: nextUsesImages.length,
+  });
 
   if (updates.sku !== undefined) {
     existingProduct.sku = String(updates.sku || "").trim() || undefined;
@@ -804,7 +829,17 @@ const updateProduct = async (productLookupId, updates = {}) => {
   }
   existingProduct.image = nextImages[0] || "";
   existingProduct.images = nextImages;
+  existingProduct.usesImages = nextUsesImages;
   await existingProduct.save();
+
+  console.log("[product.repository] updateProduct saved", {
+    productLookupId,
+    image: existingProduct.image,
+    imagesCount: Array.isArray(existingProduct.images) ? existingProduct.images.length : 0,
+    usesImagesCount: Array.isArray(existingProduct.usesImages)
+      ? existingProduct.usesImages.length
+      : 0,
+  });
 
   return serializeProduct(existingProduct.toObject());
 };

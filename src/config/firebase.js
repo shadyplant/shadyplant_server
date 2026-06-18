@@ -1,52 +1,30 @@
-const admin = require("firebase-admin");
-const fs = require("fs");
+const { cert, getApp, getApps, initializeApp } = require("firebase-admin/app");
+const { getAuth } = require("firebase-admin/auth");
 const { env } = require("./env");
 
-const loadServiceAccount = () => {
-  if (env.firebase.serviceAccountPath) {
-    const fileContents = fs.readFileSync(env.firebase.serviceAccountPath, "utf8");
-    return JSON.parse(fileContents);
-  }
-
-  if (env.firebase.serviceAccountJson) {
-    try {
-      return JSON.parse(env.firebase.serviceAccountJson);
-    } catch (jsonError) {
-      const decodedJson = Buffer.from(
-        env.firebase.serviceAccountJson,
-        "base64",
-      ).toString("utf8");
-
-      return JSON.parse(decodedJson);
-    }
-  }
-
-  return {
-    projectId: env.firebase.projectId,
-    clientEmail: env.firebase.clientEmail,
-    privateKey: env.firebase.privateKey,
-  };
-};
+const loadServiceAccount = () => ({
+  projectId: env.firebase.projectId,
+  clientEmail: env.firebase.clientEmail,
+  privateKey: env.firebase.privateKey,
+});
 
 const initializeFirebaseApp = () => {
   if (!env.isFirebaseConfigured) {
-    throw new Error(
-      "Firebase Admin is not configured. Add a Firebase service account path or service account environment values first.",
-    );
+    throw new Error("Firebase Admin is not configured. Add FIREBASE_SERVICE_ACCOUNT first.");
   }
 
-  if (admin.apps.length === 0) {
-    admin.initializeApp({
-      credential: admin.credential.cert(loadServiceAccount()),
+  if (getApps().length === 0) {
+    initializeApp({
+      credential: cert(loadServiceAccount()),
     });
   }
 
-  return admin.app();
+  return getApp();
 };
 
 const initializeFirebase = () => {
-  initializeFirebaseApp();
-  return admin.auth();
+  const app = initializeFirebaseApp();
+  return getAuth(app);
 };
 
 module.exports = { initializeFirebase, initializeFirebaseApp };

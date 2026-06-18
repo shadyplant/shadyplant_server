@@ -39,7 +39,7 @@ const bootstrap = async () => {
 
   server = app.listen(env.port, () => {
     console.log(
-      `Grass Green Nursery server listening on http://localhost:${env.port}`,
+      `ShadyPlant server listening on http://localhost:${env.port}`,
     );
   });
 };

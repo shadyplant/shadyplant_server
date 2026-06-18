@@ -3,10 +3,11 @@
 Express backend for Grass Green Nursery with a local polyglot setup:
 
 - PostgreSQL for users, sessions, orders, and payment attempts
-- Redis for OTP storage and verification attempt tracking
+- Redis is optional; the server falls back to in-memory storage for OTPs, carts, wishlists, and locks when Redis is not configured
 - MongoDB wired for catalog-style data and future product/review models
 - Firebase Admin kept for Google ID token verification only
 - PostgreSQL schema changes now run through a lightweight migration ledger instead of replaying the full DDL on every boot
+- Fresh AWS accounts should use ECS Fargate + ECR + managed databases; App Runner is only relevant if your account already had access before the 2026 cutoff
 
 ## Auth Flow
 
@@ -39,9 +40,9 @@ Express backend for Grass Green Nursery with a local polyglot setup:
 
 ## Quick Start
 
-1. Copy `.env.example` to `.env`.
+1. Copy `.env.local` for local development or `.env.production` for production deployments.
 2. Set `ACCESS_TOKEN_SECRET`, `REFRESH_TOKEN_SECRET`, and `CLIENT_ORIGIN`.
-3. Configure Firebase Admin for Google login with either environment variables or a mounted service-account file. Do not commit production credentials to the repository.
+3. Configure Firebase Admin with `FIREBASE_SERVICE_ACCOUNT`. It can point to a mounted service-account file in local dev or hold the raw JSON payload in AWS. Do not commit production credentials to the repository.
 4. Make sure Docker Desktop is running on Windows before starting the local databases.
 5. Start the local databases:
 
@@ -63,15 +64,14 @@ npm run dev
 
 ## Production Checklist
 
-- Use `.env.production.example` as the AWS/App Runner variable checklist, but store real values in AWS Secrets Manager or the hosting platform environment, never in git.
+- Use `.env.production` as the AWS variable checklist, but store real values in AWS Secrets Manager or the hosting platform environment, never in git.
 - Set `NODE_ENV=production`, `PORT=8080`, `TRUST_PROXY=true`, `CLIENT_ORIGIN=https://your-frontend-domain.com`, and `SERVER_PUBLIC_BASE_URL=https://your-api-domain.com`.
-- Use managed data services: Amazon RDS PostgreSQL, Amazon ElastiCache Redis, and MongoDB Atlas or a tested DocumentDB cluster.
-- Provide Firebase Admin credentials through `FIREBASE_SERVICE_ACCOUNT_JSON` or `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, and `FIREBASE_PRIVATE_KEY`. Do not deploy service-account JSON files with the source bundle.
-- Configure the load balancer/App Runner health check path as `/api/v1/health`.
-- App Runner can use `apprunner.yaml`; add real secrets in the App Runner console or AWS Secrets Manager instead of this file.
-- See [docs/aws-deployment.md](</D:/ShadyPlant Applications/ShadyPlant_Server/shadyplant-server/docs/aws-deployment.md>) for the full AWS setup order.
+- Use managed data services: Amazon RDS PostgreSQL and MongoDB Atlas or a tested DocumentDB cluster. Add Amazon ElastiCache Redis later if you want shared carts, OTPs, and sync locks across multiple tasks.
+- Provide Firebase Admin credentials through `FIREBASE_SERVICE_ACCOUNT`. Use the raw JSON payload in AWS or a mounted local file path during development. Do not deploy service-account JSON files with the source bundle.
+- Configure the load balancer health check path as `/api/v1/health`.
+- See [docs/ecs-deployment.md](</D:/ShadyPlant Applications/ShadyPlant_Server/shadyplant-server/docs/ecs-deployment.md>) for the full AWS setup order.
 - Use `npm run db:migrate` when you want to apply the Postgres migrations manually.
-- Rotate any credential that was ever committed or shared in `.env`, `.env.example`, logs, screenshots, or service-account JSON files.
+- Rotate any credential that was ever committed or shared in `.env.local`, `.env.production`, logs, screenshots, or service-account JSON files.
 
 ## Notes
 
@@ -81,5 +81,5 @@ npm run dev
 - Email rendering now lives in `src/email-templates`, and the reusable mailer module lives in `src/mailer`.
 - Use `MAILER_TRANSPORT=smtp` with `MAILER_HOST`, `MAILER_PORT`, `MAILER_SECURE`, `MAILER_USER`, and `MAILER_PASS` to send real emails through Nodemailer. Switch back to `log` if you only want local previews.
 - Production Google sign-in expects the frontend to authenticate with Firebase Auth using the Google provider, then send `user.getIdToken()` to `POST /api/v1/auth/google`. Raw Google OAuth access tokens should not be sent to this API.
-- Cart and wishlist are now stored server-side in Redis, so the frontend should stop treating localStorage as the source of truth after login.
+- Cart and wishlist are stored server-side; Redis is used when configured, and the server falls back to in-memory storage when it is not.
 - PostgreSQL schema is applied through the boot-time migration ledger in `src/config/postgres-migrations.js`, with the base DDL in [docker/postgres/init/001_schema.sql](/d:/ProductionApplication/GrassPlant/grass_green_nursery_server/docker/postgres/init/001_schema.sql:1) and follow-up indexes in `docker/postgres/migrations`.

@@ -3,6 +3,7 @@ const {
   addCustomerCartItemForAdmin,
   adjustProductStockForAdmin,
   createCustomerCartPaymentCheckoutForAdmin,
+  createMediaUploadSessionForAdmin,
   createCustomerForAdmin,
   createCouponForAdmin,
   createProductForAdmin,
@@ -47,6 +48,8 @@ const {
   removeCustomerCartItemForAdmin,
   setupInitialAdminOwnerController,
   syncProductsForAdmin,
+  generateAdminMailDraftForAdmin,
+  sendAdminEmailForAdmin,
   updateCustomerForAdmin,
   updateCustomerCartItemForAdmin,
   updateCouponForAdmin,
@@ -58,6 +61,7 @@ const {
   updateReviewForAdmin,
   updateServiceForAdmin,
   updateStaffForAdmin,
+  completeMediaUploadSessionForAdmin,
 } = require("../controllers/admin.controller");
 const {
   attachProductSyncRequestContext,
@@ -93,6 +97,31 @@ router.patch(
   requireStaffAuth,
   requireStaffRoles(["manager"]),
   updatePaymentGatewaySettingsForAdmin,
+);
+router.post(
+  "/mailer/draft",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  generateAdminMailDraftForAdmin,
+);
+router.post(
+  "/mailer/send",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  sendAdminEmailForAdmin,
+);
+
+router.post(
+  "/media/uploads/presign",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  createMediaUploadSessionForAdmin,
+);
+router.post(
+  "/media/uploads/:uploadId/complete",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  completeMediaUploadSessionForAdmin,
 );
 
 router.get(

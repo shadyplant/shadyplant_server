@@ -39,12 +39,12 @@ const sanitizeHomeSliderBanner = (item) => ({
 const normalizeHomeSliderBannerPayload = (payload = {}, { partial = false } = {}) => {
   const title =
     payload.title !== undefined ? String(payload.title || "").trim() : undefined;
+  const rawItemKey =
+    payload.itemKey !== undefined ? String(payload.itemKey || "").trim() : undefined;
   const itemKey =
-    payload.itemKey !== undefined
-      ? String(payload.itemKey || "").trim()
-      : !partial && title
+    rawItemKey || (!partial && title
         ? slugifyValue(title)
-        : undefined;
+        : undefined);
   const href =
     payload.href !== undefined ? String(payload.href || "").trim() : undefined;
   const desktopImage =

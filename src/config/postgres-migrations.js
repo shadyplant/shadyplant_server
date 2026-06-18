@@ -1,7 +1,6 @@
 const fs = require("fs/promises");
 const path = require("path");
 const { createSha256Hash } = require("../utils/crypto");
-const { getPostgresPool } = require("./postgres");
 
 const MIGRATION_LOCK_KEY = 48372651;
 const LEGACY_SCHEMA_FILE = path.resolve(
@@ -55,6 +54,7 @@ const ensureMigrationTable = async (client) => {
 };
 
 const runPostgresMigrations = async () => {
+  const { getPostgresPool } = require("./postgres");
   const client = await getPostgresPool().connect();
 
   try {

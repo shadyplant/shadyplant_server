@@ -1,0 +1,15 @@
+node_modules
+.env
+.env.*
+env
+*.log
+*.pem
+*.key
+*.p12
+*-firebase-adminsdk-*.json
+*firebase-adminsdk*.json
+service-account*.json
+docs
+.git
+.gitignore
+.server-start.*.log

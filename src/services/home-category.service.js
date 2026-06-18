@@ -42,12 +42,12 @@ const sanitizeHomeCategoryItem = (item) => ({
 const normalizeHomeCategoryPayload = (payload = {}, { partial = false } = {}) => {
   const label =
     payload.label !== undefined ? String(payload.label || "").trim() : undefined;
+  const rawItemKey =
+    payload.itemKey !== undefined ? String(payload.itemKey || "").trim() : undefined;
   const itemKey =
-    payload.itemKey !== undefined
-      ? String(payload.itemKey || "").trim()
-      : !partial && label
+    rawItemKey || (!partial && label
         ? slugifyValue(label)
-        : undefined;
+        : undefined);
   const href =
     payload.href !== undefined ? String(payload.href || "").trim() : undefined;
   const image =

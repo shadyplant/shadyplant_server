@@ -1,3 +1,4 @@
+const jwt = require("jsonwebtoken");
 const { env } = require("../config/env");
 const {
   getCurrentUser,
@@ -33,6 +34,30 @@ const sendAuthResponse = (res, statusCode, payload, message) => {
     },
   });
 };
+
+const getChatbaseIdentityToken = asyncHandler(async (req, res) => {
+  if (!env.chatbot.identitySecret) {
+    return res.status(503).json({
+      message: "Chat support is not configured on the server.",
+      data: null,
+    });
+  }
+
+  const token = jwt.sign(
+    {
+      user_id: req.auth.userId,
+      email: req.auth.email,
+      auth_provider: req.auth.provider,
+    },
+    env.chatbot.identitySecret,
+    { expiresIn: "1h" },
+  );
+
+  res.status(200).json({
+    message: "Chat support identity token generated successfully.",
+    data: { token },
+  });
+});
 
 const register = asyncHandler(async (req, res) => {
   const result = await registerManualUser(req.body, getRequestContext(req));
@@ -141,6 +166,7 @@ module.exports = {
   forgotPasswordRequest,
   forgotPasswordReset,
   forgotPasswordVerifyOtp,
+  getChatbaseIdentityToken,
   googleLogin,
   login,
   logout,

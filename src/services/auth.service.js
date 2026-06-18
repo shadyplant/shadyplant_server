@@ -27,7 +27,8 @@ const {
 } = require("../repositories/login-attempt.repository");
 const { initializeFirebase } = require("../config/firebase");
 const { env } = require("../config/env");
-const { sendOtpEmail } = require("../mailer");
+const { sendGreetingEmail, sendOtpEmail } = require("../mailer");
+const { addBrevoWelcomeContact } = require("./brevo.service");
 const { ApiError } = require("../utils/apiError");
 const { createSha256Hash, generateOtp } = require("../utils/crypto");
 const {
@@ -498,7 +499,7 @@ const syncUserFromGoogleIdentity = async (decodedToken) => {
     return user;
   }
 
-  return createUser({
+  const createdUser = await createUser({
     fullName: decodedToken.name || email.split("@")[0],
     email,
     authProvider: "google",
@@ -506,6 +507,20 @@ const syncUserFromGoogleIdentity = async (decodedToken) => {
     profileImage: decodedToken.picture || null,
     isVerified: true,
   });
+
+  // await addBrevoWelcomeContact({
+  //   id: createdUser.id,
+  //   email: createdUser.email,
+  //   fullName: createdUser.fullName,
+  // });
+
+  await sendWelcomeEmailBestEffort({
+    to: createdUser.email,
+    customerName: createdUser.fullName,
+    source: "google-signin",
+  });
+
+  return createdUser;
 };
 
 const createSessionBundle = async (user, sessionMeta) => {
@@ -599,6 +614,40 @@ const logOtpForDevelopment = (label, identifier, otp) => {
   console.info(`[Auth OTP] ${label} code for ${identifier}: ${otp}`);
 };
 
+const sendWelcomeEmailBestEffort = async ({ to, customerName, source }) => {
+  console.info("[Mailer] Sending native welcome email", {
+    to,
+    source,
+  });
+
+  try {
+    const result = await sendGreetingEmail({
+      to,
+      customerName,
+      source,
+    });
+
+    console.info("[Mailer] Native welcome email finished", {
+      to,
+      source,
+      skipped: Boolean(result?.skipped),
+      delivered: Boolean(result?.delivered),
+      transport: result?.transport || env.mailer.transport,
+    });
+
+    return result;
+  } catch (error) {
+    console.error("[Mailer] Native welcome email failed", {
+      to,
+      source,
+      message: error?.message || String(error),
+      stack: error?.stack || null,
+    });
+
+    return null;
+  }
+};
+
 const registerManualUser = async (payload, sessionMeta) => {
   const normalizedPayload = normalizeRegistrationPayload(payload);
   validateRegistrationPayload(normalizedPayload);
@@ -647,6 +696,18 @@ const registerManualUser = async (payload, sessionMeta) => {
     passwordHash: await hashPassword(normalizedPayload.password),
     authProvider: "local",
     isVerified: false,
+  });
+
+  // await addBrevoWelcomeContact({
+  //   id: user.id,
+  //   email: user.email,
+  //   fullName: user.fullName,
+  // });
+
+  await sendWelcomeEmailBestEffort({
+    to: user.email,
+    customerName: user.fullName,
+    source: "manual-registration",
   });
 
   const otp = await issueOtpForPurpose({

@@ -3,6 +3,7 @@ const {
   forgotPasswordRequest,
   forgotPasswordReset,
   forgotPasswordVerifyOtp,
+  getChatbaseIdentityToken,
   googleLogin,
   login,
   logout,
@@ -27,6 +28,7 @@ router.post("/register", registerLimiter, register);
 router.post("/register/verify-otp", registerLimiter, verifyRegisterOtp);
 router.post("/login", loginLimiter, login);
 router.post("/google", loginLimiter, googleLogin);
+router.get("/chatbase-token", requireAuth, getChatbaseIdentityToken);
 router.post("/refresh", refreshLimiter, refresh);
 router.post("/logout", refreshLimiter, logout);
 router.get("/session-user", refreshLimiter, sessionUser);

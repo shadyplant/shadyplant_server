@@ -33,10 +33,12 @@ const {
   listAdminStaffAccounts,
   listAdminTransactions,
   loginStaffAccount,
+  generateAdminMailDraft,
   previewAdminCustomerCartCheckout,
   removeAdminCustomerCartItem,
   setupInitialAdminOwner,
   syncAdminProductsFromSheet,
+  sendAdminEmail,
   updateAdminCustomer,
   updateAdminCustomerCartItem,
   updateAdminCoupon,
@@ -67,6 +69,10 @@ const {
   attachStaffAccessCookie,
   clearStaffAccessCookie,
 } = require("../utils/cookies");
+const {
+  completeAdminMediaUploadSession,
+  createAdminMediaUploadSession,
+} = require("../services/media-upload.service");
 
 const loginAdmin = asyncHandler(async (req, res) => {
   const payload = await loginStaffAccount(req.body);
@@ -139,6 +145,36 @@ const updatePaymentGatewaySettingsForAdmin = asyncHandler(async (req, res) => {
   res.status(200).json({
     message: "Payment gateway settings updated successfully.",
     data: { settings },
+  });
+});
+
+const sendAdminEmailForAdmin = asyncHandler(async (req, res) => {
+  const result = await sendAdminEmail({
+    recipients: req.body?.recipients,
+    to: req.body?.to,
+    subject: req.body?.subject,
+    html: req.body?.html,
+    text: req.body?.text,
+    source: req.body?.source || "admin-mailer",
+  });
+
+  res.status(200).json({
+    message: "Email processed successfully.",
+    data: { result },
+  });
+});
+
+const generateAdminMailDraftForAdmin = asyncHandler(async (req, res) => {
+  const draft = await generateAdminMailDraft({
+    prompt: req.body?.prompt,
+    mode: req.body?.mode,
+    subject: req.body?.subject,
+    currentBody: req.body?.currentBody,
+  });
+
+  res.status(200).json({
+    message: "AI mail draft generated successfully.",
+    data: { draft },
   });
 });
 
@@ -425,6 +461,28 @@ const listOrdersForAdmin = asyncHandler(async (req, res) => {
   });
 });
 
+const createMediaUploadSessionForAdmin = asyncHandler(async (req, res) => {
+  const uploadSession = await createAdminMediaUploadSession(req.staff, req.body);
+
+  res.status(201).json({
+    message: "Media upload session created successfully.",
+    data: uploadSession,
+  });
+});
+
+const completeMediaUploadSessionForAdmin = asyncHandler(async (req, res) => {
+  const session = await completeAdminMediaUploadSession(
+    req.params.uploadId,
+    req.staff,
+    req.body,
+  );
+
+  res.status(200).json({
+    message: "Media upload session completed successfully.",
+    data: { session },
+  });
+});
+
 const listTransactionsForAdmin = asyncHandler(async (req, res) => {
   const payload = await listAdminTransactions(req.query);
   res.status(200).json({
@@ -685,6 +743,10 @@ module.exports = {
   updateCouponForAdmin,
   updateHomeCategoryForAdmin,
   updateHomeSliderBannerForAdmin,
+  createMediaUploadSessionForAdmin,
+  completeMediaUploadSessionForAdmin,
+  generateAdminMailDraftForAdmin,
+  sendAdminEmailForAdmin,
   updateOrderForAdmin,
   updatePaymentGatewaySettingsForAdmin,
   updateProductForAdmin,

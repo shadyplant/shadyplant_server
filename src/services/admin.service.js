@@ -74,6 +74,8 @@ const {
   listAllPaymentAttempts,
 } = require("../repositories/payment.repository");
 const { env } = require("../config/env");
+const { sendEmail, sendGreetingEmail } = require("../mailer");
+const { addBrevoWelcomeContact } = require("./brevo.service");
 const { ApiError } = require("../utils/apiError");
 const { comparePassword, hashPassword, validatePasswordStrength } = require("../utils/password");
 const { isValidEmail, isValidPhoneNumber, normalizeEmail } = require("../utils/validators");
@@ -183,6 +185,294 @@ const normalizeStringArray = (value) =>
     : [];
 
 const normalizeString = (value) => String(value || "").trim();
+
+const sendWelcomeEmailBestEffort = async ({ to, customerName, source }) => {
+  console.info("[Mailer] Sending native welcome email", {
+    to,
+    source,
+  });
+
+  try {
+    const result = await sendGreetingEmail({
+      to,
+      customerName,
+      source,
+    });
+
+    console.info("[Mailer] Native welcome email finished", {
+      to,
+      source,
+      skipped: Boolean(result?.skipped),
+      delivered: Boolean(result?.delivered),
+      transport: result?.transport || env.mailer.transport,
+    });
+
+    return result;
+  } catch (error) {
+    console.error("[Mailer] Native welcome email failed", {
+      to,
+      source,
+      message: error?.message || String(error),
+      stack: error?.stack || null,
+    });
+
+    return null;
+  }
+};
+
+const parseMailRecipients = (value) => {
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  return String(value || "")
+    .split(/[\n,;]/)
+    .map((entry) => String(entry || "").trim())
+    .filter(Boolean);
+};
+
+const validateMailRecipients = (recipients) => {
+  const normalizedRecipients = [
+    ...new Set(
+      parseMailRecipients(recipients)
+        .map((entry) => normalizeEmail(entry))
+        .filter(Boolean),
+    ),
+  ];
+
+  if (!normalizedRecipients.length) {
+    throw new ApiError(400, "At least one recipient email is required.");
+  }
+
+  const invalidRecipients = normalizedRecipients.filter(
+    (recipient) => !isValidEmail(recipient),
+  );
+
+  if (invalidRecipients.length) {
+    throw new ApiError(
+      400,
+      `Invalid recipient email address${invalidRecipients.length > 1 ? "es" : ""}: ${invalidRecipients.join(", ")}`,
+    );
+  }
+
+  return normalizedRecipients;
+};
+
+const sendAdminMailMessage = async ({
+  recipients,
+  subject,
+  html,
+  text,
+  source = "admin-mailer",
+}) => {
+  const normalizedRecipients = validateMailRecipients(recipients);
+  const normalizedSubject = normalizeString(subject);
+  const normalizedHtml = String(html || "").trim();
+  const normalizedText = String(text || "").trim();
+
+  if (!normalizedSubject) {
+    throw new ApiError(400, "Email subject is required.");
+  }
+
+  if (!normalizedHtml && !normalizedText) {
+    throw new ApiError(400, "Email body is required.");
+  }
+
+  console.info("[Mailer] Sending admin message", {
+    source,
+    recipients: normalizedRecipients,
+    subject: normalizedSubject,
+    hasHtml: Boolean(normalizedHtml),
+    hasText: Boolean(normalizedText),
+    from: env.mailer.aliasUser || env.mailer.fromEmail,
+    replyTo: env.mailer.replyTo || null,
+  });
+
+  try {
+    const result = await sendEmail({
+      to: normalizedRecipients,
+      subject: normalizedSubject,
+      html: normalizedHtml,
+      text: normalizedText,
+      tags: ["admin-mailer", source].filter(Boolean),
+      metadata: {
+        source,
+        recipientCount: normalizedRecipients.length,
+      },
+    });
+
+    console.info("[Mailer] Admin message processed", {
+      source,
+      recipients: normalizedRecipients,
+      subject: normalizedSubject,
+      skipped: Boolean(result?.skipped),
+      delivered: Boolean(result?.delivered),
+      transport: result?.transport || env.mailer.transport,
+      messageId: result?.messageId || null,
+      accepted: result?.accepted || [],
+      rejected: result?.rejected || [],
+      response: result?.response || null,
+    });
+
+    return result;
+  } catch (error) {
+    console.error("[Mailer] Admin message failed", {
+      source,
+      recipients: normalizedRecipients,
+      subject: normalizedSubject,
+      message: error?.message || String(error),
+      stack: error?.stack || null,
+    });
+
+    throw new ApiError(503, "Unable to send email right now. Please try again.");
+  }
+};
+
+const normalizeAdminMailMode = (value) =>
+  String(value || "").trim().toLowerCase() === "text" ? "text" : "html";
+
+const buildAdminMailDraftPrompt = ({
+  prompt,
+  mode,
+  subject,
+  currentBody,
+}) => {
+  const normalizedMode = normalizeAdminMailMode(mode);
+  const systemMessage = [
+    "You are an expert ecommerce email copywriter for a plant nursery brand.",
+    `Write only ${normalizedMode === "html" ? "HTML" : "plain text"} content.`,
+    normalizedMode === "html"
+      ? "Return a mobile-friendly HTML fragment only. Do not include markdown fences, <html>, <body>, or code blocks."
+      : "Return plain text only. Do not include markdown fences.",
+    "Keep the copy polished, concise, and customer-friendly.",
+    "Do not mention that you are AI.",
+  ].join(" ");
+
+  const userMessage = [
+    `Email mode: ${normalizedMode}.`,
+    subject ? `Subject: ${subject}` : "",
+    currentBody ? `Current draft to improve or replace:\n${currentBody}` : "",
+    `Request: ${prompt}`,
+    normalizedMode === "html"
+      ? "If useful, include short paragraphs, bullet lists, and a call-to-action button style link using inline HTML only."
+      : "Use clear line breaks and readable spacing.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  return { systemMessage, userMessage };
+};
+
+const parseOpenRouterDraft = (content, mode) => {
+  const normalizedContent = String(content || "").trim();
+
+  if (!normalizedContent) {
+    return "";
+  }
+
+  return normalizedContent
+    .replace(/^```(?:html|text)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+};
+
+const generateAdminMailDraft = async ({
+  prompt,
+  mode,
+  subject = "",
+  currentBody = "",
+} = {}) => {
+  const normalizedPrompt = normalizeString(prompt);
+  const normalizedSubject = normalizeString(subject);
+  const normalizedCurrentBody = String(currentBody || "").trim();
+  const normalizedMode = normalizeAdminMailMode(mode);
+
+  if (!normalizedPrompt) {
+    throw new ApiError(400, "AI prompt is required.");
+  }
+
+  if (!env.openrouter.isConfigured) {
+    console.warn("[OpenRouter] Skipping mail draft generation: configuration is missing.", {
+      model: env.openrouter.model || null,
+      hasApiKey: Boolean(env.openrouter.apiKey),
+    });
+    throw new ApiError(503, "AI writer is not configured on the server.");
+  }
+
+  const { systemMessage, userMessage } = buildAdminMailDraftPrompt({
+    prompt: normalizedPrompt,
+    mode: normalizedMode,
+    subject: normalizedSubject,
+    currentBody: normalizedCurrentBody,
+  });
+
+  console.info("[OpenRouter] Generating mail draft", {
+    mode: normalizedMode,
+    subject: normalizedSubject || null,
+    promptLength: normalizedPrompt.length,
+    currentBodyLength: normalizedCurrentBody.length,
+    model: env.openrouter.model,
+  });
+
+  const response = await fetch(
+    `${String(env.openrouter.baseUrl || "https://openrouter.ai/api/v1").replace(/\/+$/, "")}/chat/completions`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.openrouter.apiKey}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "HTTP-Referer": env.openrouter.siteUrl || "http://localhost",
+        "X-Title": env.appName,
+      },
+      body: JSON.stringify({
+        model: env.openrouter.model,
+        messages: [
+          { role: "system", content: systemMessage },
+          { role: "user", content: userMessage },
+        ],
+        temperature: 0.7,
+        max_tokens: 1400,
+      }),
+    },
+  );
+
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    console.error("[OpenRouter] Draft generation failed", {
+      status: response.status,
+      data: payload,
+      model: env.openrouter.model,
+    });
+    throw new ApiError(
+      503,
+      "AI writer failed to generate the draft. Please try again.",
+    );
+  }
+
+  const rawContent = payload?.choices?.[0]?.message?.content || "";
+  const body = parseOpenRouterDraft(rawContent, normalizedMode);
+
+  if (!body) {
+    console.error("[OpenRouter] Draft generation returned empty content", {
+      payload,
+    });
+    throw new ApiError(503, "AI writer returned an empty draft.");
+  }
+
+  console.info("[OpenRouter] Draft generation succeeded", {
+    mode: normalizedMode,
+    subject: normalizedSubject || null,
+    draftLength: body.length,
+  });
+
+  return {
+    mode: normalizedMode,
+    body,
+    subject: normalizedSubject || null,
+  };
+};
 
 const getAccountLockoutMessage = (retryAfterSeconds) => {
   const retryAfterMinutes = Math.max(
@@ -707,6 +997,8 @@ const normalizeServicePayload = (payload = {}, { partial = false } = {}) => {
       payload.image !== undefined ? String(payload.image || "").trim() : undefined,
     images:
       payload.images !== undefined ? normalizeStringArray(payload.images) : undefined,
+    usesImages:
+      payload.usesImages !== undefined ? normalizeStringArray(payload.usesImages) : undefined,
     tags: payload.tags !== undefined ? normalizeStringArray(payload.tags) : undefined,
     isActive:
       payload.isActive === undefined
@@ -819,6 +1111,8 @@ const normalizeProductPayload = (payload = {}, { partial = false } = {}) => {
       payload.image !== undefined ? String(payload.image || "").trim() : undefined,
     images:
       payload.images !== undefined ? normalizeStringArray(payload.images) : undefined,
+    usesImages:
+      payload.usesImages !== undefined ? normalizeStringArray(payload.usesImages) : undefined,
     videoClips:
       payload.videoClips !== undefined && Array.isArray(payload.videoClips)
         ? payload.videoClips
@@ -1084,6 +1378,14 @@ const createAdminProduct = async (payload) =>
   );
 
 const updateAdminProduct = async (productId, payload) => {
+  console.log("[admin.service] updateAdminProduct request", {
+    productId,
+    payloadKeys: Object.keys(payload || {}),
+    image: payload?.image,
+    imagesCount: Array.isArray(payload?.images) ? payload.images.length : undefined,
+    usesImagesCount: Array.isArray(payload?.usesImages) ? payload.usesImages.length : undefined,
+  });
+
   const product = await updateProduct(
     productId,
     normalizeProductPayload(payload, { partial: true }),
@@ -1092,6 +1394,13 @@ const updateAdminProduct = async (productId, payload) => {
   if (!product) {
     throw new ApiError(404, "Product not found.");
   }
+
+  console.log("[admin.service] updateAdminProduct response", {
+    productId: product.id,
+    image: product.image,
+    imagesCount: Array.isArray(product.images) ? product.images.length : 0,
+    usesImagesCount: Array.isArray(product.usesImages) ? product.usesImages.length : 0,
+  });
 
   return enrichAdminProductWithStockAlerts(product, {
     includeStockAlerts: true,
@@ -2130,8 +2439,29 @@ const createAdminCustomer = async (payload = {}) => {
     accountStatus: USER_ACCOUNT_STATUSES.active,
   });
 
+  // await addBrevoWelcomeContact({
+  //   id: customer.id,
+  //   email: customer.email,
+  //   fullName: customer.fullName,
+  // });
+
+  await sendWelcomeEmailBestEffort({
+    to: customer.email,
+    customerName: customer.fullName,
+    source: "admin-customer-create",
+  });
+
   return sanitizeCustomer(customer);
 };
+
+const sendAdminEmail = async (payload = {}) =>
+  sendAdminMailMessage({
+    recipients: payload.recipients || payload.to || [],
+    subject: payload.subject,
+    html: payload.html,
+    text: payload.text,
+    source: payload.source || "admin-mailer",
+  });
 
 const getAdminCustomer = async (customerId) => {
   const customer = await findUserById(customerId);
@@ -2503,8 +2833,10 @@ module.exports = {
   listAdminStaffAccounts,
   listAdminTransactions,
   loginStaffAccount,
+  generateAdminMailDraft,
   previewAdminCustomerCartCheckout,
   removeAdminCustomerCartItem,
+  sendAdminEmail,
   setupInitialAdminOwner,
   syncAdminProductsFromSheet,
   updateAdminCustomer,

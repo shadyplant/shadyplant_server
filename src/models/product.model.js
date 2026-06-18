@@ -301,6 +301,15 @@ const productSchema = new mongoose.Schema(
       ],
       default: undefined,
     },
+    usesImages: {
+      type: [
+        {
+          type: String,
+          trim: true,
+        },
+      ],
+      default: undefined,
+    },
     tags: {
       type: [
         {

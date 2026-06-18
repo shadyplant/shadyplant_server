@@ -32,6 +32,7 @@ const {
 const {
   calculateTransportCharge,
   getDistanceKmForLocation,
+  resolveDeliveryState,
 } = require("./delivery.service");
 const { notifyOrderPrimaryStatus, serializeOrder } = require("./order.service");
 const {
@@ -400,10 +401,22 @@ const buildCheckoutPreview = async (userId, payload = {}) => {
     lng: Number(payload.deliveryLocation?.lng ?? payload.lng),
   };
   const distanceKm = await getDistanceKmForLocation(deliveryLocation);
+  const deliveryState =
+    String(payload.deliveryAddress?.state || payload.state || "").trim() ||
+    (await resolveDeliveryState(deliveryLocation));
+
+  if (!deliveryState) {
+    throw new ApiError(
+      400,
+      "Delivery state is required. Pass state from the frontend or provide a lat/lng pair for geo lookup.",
+    );
+  }
+
   const cart = await getCartLineItems(userId);
   const deliveryResult = calculateTransportCharge(
     cart.summary.totalWeightKg,
     distanceKm,
+    deliveryState,
   );
 
   if (!deliveryResult.success) {
@@ -438,6 +451,7 @@ const buildCheckoutPreview = async (userId, payload = {}) => {
     summary: cart.summary,
     pricing: couponPricing.pricing,
     appliedCoupon: couponPricing.appliedCoupon,
+    deliveryState,
     deliveryChargeDetails: {
       message: deliveryResult.message,
       rate: deliveryResult.rate || 0,
@@ -481,6 +495,7 @@ const previewCartCheckout = async (userId, payload = {}) => {
   return {
     deliveryAddress: preview.deliveryAddress,
     deliveryLocation: preview.deliveryLocation,
+    deliveryState: preview.deliveryState,
     summary: preview.summary,
     pricing: preview.pricing,
     deliveryChargeDetails: preview.deliveryChargeDetails,
