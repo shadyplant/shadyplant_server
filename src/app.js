@@ -71,7 +71,7 @@ app.use(cookieParser());
 
 app.get("/", (req, res) => {
   res.status(200).json({
-    message: "Grass Green Nursery API is running.",
+    message: "Shadyplant API is running.",
   });
 });
 

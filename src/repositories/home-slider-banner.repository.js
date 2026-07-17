@@ -12,7 +12,9 @@ const mapHomeSliderBannerRow = (row) => {
     organizationId: row.organization_id,
     itemKey: row.item_key,
     title: row.title,
+    actionType: row.action_type || "link",
     href: row.href,
+    popupKey: row.popup_key || "",
     desktopImage: row.desktop_image,
     mobileImage: row.mobile_image,
     isActive: Boolean(row.is_active),
@@ -79,7 +81,9 @@ const createHomeSliderBanner = async ({
   organizationId,
   itemKey,
   title,
+  actionType,
   href,
+  popupKey,
   desktopImage,
   mobileImage,
   isActive,
@@ -87,6 +91,7 @@ const createHomeSliderBanner = async ({
 }) => {
   const id = generateId();
   const now = new Date();
+  const normalizedActionType = actionType === "popup" ? "popup" : "link";
 
   await query(
     `INSERT INTO home_slider_banners (
@@ -94,7 +99,9 @@ const createHomeSliderBanner = async ({
       organization_id,
       item_key,
       title,
+      action_type,
       href,
+      popup_key,
       desktop_image,
       mobile_image,
       is_active,
@@ -102,14 +109,16 @@ const createHomeSliderBanner = async ({
       created_at,
       updated_at
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
     )`,
     [
       id,
       organizationId,
       itemKey,
       title,
-      href,
+      normalizedActionType,
+      href || "",
+      popupKey || "",
       desktopImage,
       mobileImage,
       isActive,
@@ -124,7 +133,9 @@ const createHomeSliderBanner = async ({
     organizationId,
     itemKey,
     title,
-    href,
+    actionType: normalizedActionType,
+    href: href || "",
+    popupKey: popupKey || "",
     desktopImage,
     mobileImage,
     isActive,
@@ -140,7 +151,9 @@ const updateHomeSliderBanner = async (itemId, updates) => {
       organizationId: updates.organizationId,
       itemKey: updates.itemKey,
       title: updates.title,
+      actionType: updates.actionType,
       href: updates.href,
+      popupKey: updates.popupKey,
       desktopImage: updates.desktopImage,
       mobileImage: updates.mobileImage,
       isActive: updates.isActive,
@@ -150,7 +163,9 @@ const updateHomeSliderBanner = async (itemId, updates) => {
     {
       organizationId: "organization_id",
       itemKey: "item_key",
+      actionType: "action_type",
       desktopImage: "desktop_image",
+      popupKey: "popup_key",
       mobileImage: "mobile_image",
       isActive: "is_active",
       sortOrder: "sort_order",

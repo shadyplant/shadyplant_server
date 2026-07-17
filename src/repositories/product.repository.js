@@ -64,6 +64,11 @@ const normalizeOptionalNumber = (value) => {
   return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : null;
 };
 
+const normalizeOptionalInteger = (value) => {
+  const parsedValue = Math.floor(Number(value));
+  return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : null;
+};
+
 const resolveMrpValue = (mrp, price) => {
   const normalizedPrice = normalizeOptionalNumber(price);
   const normalizedMrp = normalizeOptionalNumber(mrp);
@@ -77,11 +82,6 @@ const resolveMrpValue = (mrp, price) => {
   }
 
   return Math.max(normalizedMrp, normalizedPrice);
-};
-
-const normalizeOptionalInteger = (value) => {
-  const parsedValue = Math.floor(Number(value));
-  return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : null;
 };
 
 const formatMeasurementValue = (value) =>
@@ -232,6 +232,7 @@ const normalizeProductDetailSections = (product = {}) =>
 
           const title = String(section.title || "").trim();
           const description = String(section.description || "").trim();
+          const icon = String(section.icon || "").trim();
 
           if (!title || !description) {
             return null;
@@ -240,6 +241,7 @@ const normalizeProductDetailSections = (product = {}) =>
           return {
             title,
             description,
+            icon,
             sortOrder: Number.isFinite(Number(section.sortOrder))
               ? Math.max(0, Math.floor(Number(section.sortOrder)))
               : index,
@@ -247,6 +249,50 @@ const normalizeProductDetailSections = (product = {}) =>
         })
         .filter(Boolean)
         .sort((left, right) => left.sortOrder - right.sortOrder)
+    : [];
+
+const normalizeProductQuantityPricingSlab = (slab = {}, index = 0) => {
+  if (!slab || typeof slab !== "object") {
+    return null;
+  }
+
+  const minQuantity = normalizePositiveInteger(
+    slab.minQuantity ?? slab.minQty ?? slab.from ?? slab.start,
+    1,
+  );
+  const rawMaxQuantity = slab.maxQuantity ?? slab.maxQty ?? slab.to ?? slab.end;
+  const maxQuantity =
+    rawMaxQuantity === undefined || rawMaxQuantity === null || String(rawMaxQuantity).trim() === ""
+      ? null
+      : Math.max(minQuantity, normalizePositiveInteger(rawMaxQuantity, minQuantity));
+  const pricePerUnit = normalizeOptionalNumber(
+    slab.pricePerUnit ?? slab.unitPrice ?? slab.price ?? slab.salePrice,
+  );
+  const label =
+    String(slab.label || "").trim() ||
+    (maxQuantity !== null ? `${minQuantity}-${maxQuantity}` : `${minQuantity}+`);
+
+  if (!minQuantity || pricePerUnit === null) {
+    return null;
+  }
+
+  return {
+    key:
+      slugifyValue(String(slab.key || "").trim() || label) || `slab-${index + 1}`,
+    label,
+    minQuantity,
+    maxQuantity,
+    pricePerUnit,
+    note: String(slab.note || slab.description || "").trim(),
+  };
+};
+
+const normalizeProductQuantityPricingSlabs = (product = {}) =>
+  Array.isArray(product.quantityPricingSlabs)
+    ? product.quantityPricingSlabs
+        .map((slab, index) => normalizeProductQuantityPricingSlab(slab, index))
+        .filter(Boolean)
+        .sort((left, right) => left.minQuantity - right.minQuantity)
     : [];
 
 const normalizeProductOptionSelections = (value) => {
@@ -445,10 +491,25 @@ const prepareProductForStorage = (product = {}) => {
     productId: buildProductIdentifier({ ...product, id }),
     sku: String(product.sku || "").trim() || undefined,
     skuId: buildProductSkuId({ ...product, id }) || undefined,
+    hsnCode: String(product.hsnCode || "").trim(),
     variety: String(product.variety || "").trim(),
     containerSize: String(product.containerSize || "").trim(),
     height: String(product.height || "").trim(),
+    growthSpeed: String(product.growthSpeed || "").trim(),
+    countryOfOrigin: String(product.countryOfOrigin || "").trim(),
+    manufacturedBy: String(product.manufacturedBy || "").trim(),
+    marketedBy: String(product.marketedBy || "").trim(),
     brand: String(product.brand || "").trim(),
+    potMaterial: String(product.potMaterial || "").trim(),
+    leafColor: String(product.leafColor || "").trim(),
+    flowerColor: String(product.flowerColor || "").trim(),
+    lightRequirement: String(product.lightRequirement || "").trim(),
+    waterRequirement: String(product.waterRequirement || "").trim(),
+    plantPlacement: String(product.plantPlacement || "").trim(),
+    usageArea: String(product.usageArea || "").trim(),
+    plantAgeMonths: normalizeOptionalInteger(product.plantAgeMonths),
+    productionCapacity: normalizeOptionalInteger(product.productionCapacity),
+    packagingDetails: String(product.packagingDetails || "").trim(),
     mrp: resolveMrpValue(product.mrp, product.price),
     stock: normalizeNonNegativeInteger(product.stock, 0),
     variant: String(product.variant || "").trim(),
@@ -461,6 +522,7 @@ const prepareProductForStorage = (product = {}) => {
     videoClips: normalizeProductVideoClips({ ...product, id }),
     optionGroups: normalizeProductOptionGroups(product),
     detailSections: normalizeProductDetailSections(product),
+    quantityPricingSlabs: normalizeProductQuantityPricingSlabs(product),
   };
 };
 
@@ -537,12 +599,27 @@ const serializeProduct = (product) => {
     productId: buildProductIdentifier(product),
     sku: String(product.sku || "").trim(),
     skuId: buildProductSkuId(product),
+    hsnCode: String(product.hsnCode || "").trim(),
     name: product.name,
     category: product.category,
     variety: String(product.variety || "").trim(),
     containerSize: String(product.containerSize || "").trim(),
     height: String(product.height || "").trim(),
+    growthSpeed: String(product.growthSpeed || "").trim(),
+    countryOfOrigin: String(product.countryOfOrigin || "").trim(),
+    manufacturedBy: String(product.manufacturedBy || "").trim(),
+    marketedBy: String(product.marketedBy || "").trim(),
     brand: String(product.brand || "").trim(),
+    potMaterial: String(product.potMaterial || "").trim(),
+    leafColor: String(product.leafColor || "").trim(),
+    flowerColor: String(product.flowerColor || "").trim(),
+    lightRequirement: String(product.lightRequirement || "").trim(),
+    waterRequirement: String(product.waterRequirement || "").trim(),
+    plantPlacement: String(product.plantPlacement || "").trim(),
+    usageArea: String(product.usageArea || "").trim(),
+    plantAgeMonths: normalizeOptionalInteger(product.plantAgeMonths),
+    productionCapacity: normalizeOptionalInteger(product.productionCapacity),
+    packagingDetails: String(product.packagingDetails || "").trim(),
     price: product.price,
     mrp: resolveMrpValue(product.mrp, product.price) ?? Number(product.price || 0),
     weight: Number(product.weight) > 0 ? Number(product.weight) : 0,
@@ -569,6 +646,7 @@ const serializeProduct = (product) => {
     videoClips: normalizeProductVideoClips(product),
     optionGroups: normalizeProductOptionGroups(product),
     detailSections: normalizeProductDetailSections(product),
+    quantityPricingSlabs: normalizeProductQuantityPricingSlabs(product),
     createdAt: product.createdAt || null,
     updatedAt: product.updatedAt || null,
   };
@@ -758,8 +836,68 @@ const updateProduct = async (productLookupId, updates = {}) => {
     updates.height !== undefined
       ? String(updates.height || "").trim()
       : existingProduct.height;
+  existingProduct.growthSpeed =
+    updates.growthSpeed !== undefined
+      ? String(updates.growthSpeed || "").trim()
+      : existingProduct.growthSpeed;
+  existingProduct.countryOfOrigin =
+    updates.countryOfOrigin !== undefined
+      ? String(updates.countryOfOrigin || "").trim()
+      : existingProduct.countryOfOrigin;
+  existingProduct.manufacturedBy =
+    updates.manufacturedBy !== undefined
+      ? String(updates.manufacturedBy || "").trim()
+      : existingProduct.manufacturedBy;
+  existingProduct.marketedBy =
+    updates.marketedBy !== undefined
+      ? String(updates.marketedBy || "").trim()
+      : existingProduct.marketedBy;
   existingProduct.brand =
     updates.brand !== undefined ? String(updates.brand || "").trim() : existingProduct.brand;
+  existingProduct.potMaterial =
+    updates.potMaterial !== undefined
+      ? String(updates.potMaterial || "").trim()
+      : existingProduct.potMaterial;
+  existingProduct.hsnCode =
+    updates.hsnCode !== undefined
+      ? String(updates.hsnCode || "").trim()
+      : existingProduct.hsnCode;
+  existingProduct.leafColor =
+    updates.leafColor !== undefined
+      ? String(updates.leafColor || "").trim()
+      : existingProduct.leafColor;
+  existingProduct.flowerColor =
+    updates.flowerColor !== undefined
+      ? String(updates.flowerColor || "").trim()
+      : existingProduct.flowerColor;
+  existingProduct.lightRequirement =
+    updates.lightRequirement !== undefined
+      ? String(updates.lightRequirement || "").trim()
+      : existingProduct.lightRequirement;
+  existingProduct.waterRequirement =
+    updates.waterRequirement !== undefined
+      ? String(updates.waterRequirement || "").trim()
+      : existingProduct.waterRequirement;
+  existingProduct.plantPlacement =
+    updates.plantPlacement !== undefined
+      ? String(updates.plantPlacement || "").trim()
+      : existingProduct.plantPlacement;
+  existingProduct.usageArea =
+    updates.usageArea !== undefined
+      ? String(updates.usageArea || "").trim()
+      : existingProduct.usageArea;
+  existingProduct.plantAgeMonths =
+    updates.plantAgeMonths !== undefined
+      ? normalizeOptionalInteger(updates.plantAgeMonths)
+      : existingProduct.plantAgeMonths;
+  existingProduct.productionCapacity =
+    updates.productionCapacity !== undefined
+      ? normalizeOptionalInteger(updates.productionCapacity)
+      : existingProduct.productionCapacity;
+  existingProduct.packagingDetails =
+    updates.packagingDetails !== undefined
+      ? String(updates.packagingDetails || "").trim()
+      : existingProduct.packagingDetails;
   existingProduct.price =
     updates.price !== undefined ? Number(updates.price) : existingProduct.price;
   existingProduct.mrp =
@@ -825,6 +963,11 @@ const updateProduct = async (productLookupId, updates = {}) => {
   if (updates.detailSections !== undefined) {
     existingProduct.detailSections = normalizeProductDetailSections({
       detailSections: updates.detailSections,
+    });
+  }
+  if (updates.quantityPricingSlabs !== undefined) {
+    existingProduct.quantityPricingSlabs = normalizeProductQuantityPricingSlabs({
+      quantityPricingSlabs: updates.quantityPricingSlabs,
     });
   }
   existingProduct.image = nextImages[0] || "";

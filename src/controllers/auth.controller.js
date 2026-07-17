@@ -8,6 +8,7 @@ const {
   logoutUser,
   refreshAuthSession,
   registerManualUser,
+  resendRegistrationOtp,
   requestPasswordReset,
   resetPassword,
   updateCurrentUserProfile,
@@ -62,6 +63,23 @@ const getChatbaseIdentityToken = asyncHandler(async (req, res) => {
 const register = asyncHandler(async (req, res) => {
   const result = await registerManualUser(req.body, getRequestContext(req));
   res.status(201).json(result);
+});
+
+const resendRegisterOtp = asyncHandler(async (req, res) => {
+  console.info("[Auth] /register/resend-otp request received", {
+    ipAddress: req.ip,
+    userAgent: req.get("user-agent"),
+    bodyKeys: Object.keys(req.body || {}),
+  });
+
+  const result = await resendRegistrationOtp(req.body);
+
+  console.info("[Auth] /register/resend-otp request processed", {
+    ipAddress: req.ip,
+    message: result?.message,
+  });
+
+  res.status(200).json(result);
 });
 
 const verifyRegisterOtp = asyncHandler(async (req, res) => {
@@ -174,6 +192,7 @@ module.exports = {
   sessionUser,
   refresh,
   register,
+  resendRegisterOtp,
   verifyRegisterOtp,
   updateMe,
 };

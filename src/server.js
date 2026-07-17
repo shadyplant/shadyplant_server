@@ -3,6 +3,9 @@ const { env } = require("./config/env");
 const { closeMongo, initializeMongo } = require("./config/mongo");
 const { closePostgres, initializePostgres } = require("./config/postgres");
 const { closeRedis, initializeRedis } = require("./config/redis");
+const {
+  bootstrapDeliveryChargeConfiguration,
+} = require("./services/delivery-charge.service");
 const { bootstrapAdminWorkspace } = require("./services/admin.service");
 const { seedHomeCategoryItems } = require("./services/home-category.service");
 const { seedProductCatalog } = require("./services/product.service");
@@ -32,6 +35,7 @@ const shutdown = async (signal) => {
 const bootstrap = async () => {
   await initializePostgres();
   await bootstrapAdminWorkspace();
+  await bootstrapDeliveryChargeConfiguration();
   await initializeRedis();
   await initializeMongo();
   await seedProductCatalog();

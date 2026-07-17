@@ -53,6 +53,9 @@ module.exports = {
   ),
   productSyncLimiter,
   refreshLimiter,
+  registerResendLimiter: createAuthLimiter(
+    "Too many verification resend attempts. Please wait a minute and try again.",
+  ),
   registerLimiter: createAuthLimiter(
     "Too many registration attempts. Please wait a minute and try again.",
   ),

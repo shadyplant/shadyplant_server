@@ -3,11 +3,8 @@ const NodeCache = require("node-cache");
 const { env } = require("../config/env");
 const { ApiError } = require("../utils/apiError");
 const {
-  calculateTransportChargeForPanIndia,
-} = require("../transport-charge-calculator/pan-india");
-const {
-  calculateTransportChargeForNorthEast,
-} = require("../transport-charge-calculator/ne");
+  calculateTransportCharge: calculateTransportChargeByRules,
+} = require("./delivery-charge.service");
 
 const cache = new NodeCache({ stdTTL: 300 });
 
@@ -15,23 +12,6 @@ const STORE_LOCATION = {
   lat: env.delivery.originLat,
   lng: env.delivery.originLng,
 };
-
-const PAN_INDIA_STATES = new Set([
-  "assam",
-  "jharkhand",
-  "bihar",
-  "west bengal",
-]);
-
-const NORTH_EAST_STATES = new Set([
-  "meghalaya",
-  "mizoram",
-  "nagaland",
-  "tripura",
-  "arunachal pradesh",
-  "manipur",
-  "sikkim",
-]);
 
 const parseCoordinate = (value, label) => {
   const parsedValue = Number(value);
@@ -166,30 +146,8 @@ const resolveDeliveryState = async ({ state, lat, lng } = {}) => {
   return getStateNameForLocation({ lat, lng });
 };
 
-const calculateTransportCharge = (weight, distance, state) => {
-  console.log("Calculating transport charge with inputs:", { weight, distance, state });
-  const normalizedState = String(state || "").trim().toLowerCase();
-
-  if (!normalizedState) {
-    return {
-      success: false,
-      message: "Delivery state is required for transport charge calculation.",
-    };
-  }
-
-  if (PAN_INDIA_STATES.has(normalizedState)) {
-    return calculateTransportChargeForPanIndia(weight, distance);
-  }
-
-  if (NORTH_EAST_STATES.has(normalizedState)) {
-    return calculateTransportChargeForNorthEast(weight, distance);
-  }
-
-  return {
-    success: false,
-    message: `Unsupported delivery state: ${state}.`,
-  }
-};
+const calculateTransportCharge = (weight, distance, stateOrOptions) =>
+  calculateTransportChargeByRules(weight, distance, stateOrOptions);
 
 module.exports = {
   STORE_LOCATION,

@@ -185,6 +185,10 @@ const normalizeStringArray = (value) =>
     : [];
 
 const normalizeString = (value) => String(value || "").trim();
+const normalizeOptionalInteger = (value) => {
+  const parsedValue = Math.floor(Number(value));
+  return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : undefined;
+};
 
 const sendWelcomeEmailBestEffort = async ({ to, customerName, source }) => {
   console.info("[Mailer] Sending native welcome email", {
@@ -1029,6 +1033,50 @@ const normalizeProductPayload = (payload = {}, { partial = false } = {}) => {
       : undefined;
   const height =
     payload.height !== undefined ? String(payload.height || "").trim() : undefined;
+  const growthSpeed =
+    payload.growthSpeed !== undefined ? String(payload.growthSpeed || "").trim() : undefined;
+  const countryOfOrigin =
+    payload.countryOfOrigin !== undefined
+      ? String(payload.countryOfOrigin || "").trim()
+      : undefined;
+  const manufacturedBy =
+    payload.manufacturedBy !== undefined
+      ? String(payload.manufacturedBy || "").trim()
+      : undefined;
+  const marketedBy =
+    payload.marketedBy !== undefined ? String(payload.marketedBy || "").trim() : undefined;
+  const hsnCode =
+    payload.hsnCode !== undefined ? String(payload.hsnCode || "").trim() : undefined;
+  const leafColor =
+    payload.leafColor !== undefined ? String(payload.leafColor || "").trim() : undefined;
+  const flowerColor =
+    payload.flowerColor !== undefined ? String(payload.flowerColor || "").trim() : undefined;
+  const lightRequirement =
+    payload.lightRequirement !== undefined
+      ? String(payload.lightRequirement || "").trim()
+      : undefined;
+  const waterRequirement =
+    payload.waterRequirement !== undefined
+      ? String(payload.waterRequirement || "").trim()
+      : undefined;
+  const plantPlacement =
+    payload.plantPlacement !== undefined
+      ? String(payload.plantPlacement || "").trim()
+      : undefined;
+  const usageArea =
+    payload.usageArea !== undefined ? String(payload.usageArea || "").trim() : undefined;
+  const plantAgeMonths =
+    payload.plantAgeMonths !== undefined
+      ? normalizeOptionalInteger(payload.plantAgeMonths)
+      : undefined;
+  const productionCapacity =
+    payload.productionCapacity !== undefined
+      ? normalizeOptionalInteger(payload.productionCapacity)
+      : undefined;
+  const packagingDetails =
+    payload.packagingDetails !== undefined
+      ? String(payload.packagingDetails || "").trim()
+      : undefined;
   const packLabel =
     payload.packLabel !== undefined
       ? String(payload.packLabel || "").trim()
@@ -1080,8 +1128,26 @@ const normalizeProductPayload = (payload = {}, { partial = false } = {}) => {
     variety,
     containerSize,
     height,
+    growthSpeed,
+    countryOfOrigin,
+    manufacturedBy,
+    marketedBy,
     brand:
       payload.brand !== undefined ? String(payload.brand || "").trim() : undefined,
+    potMaterial:
+      payload.potMaterial !== undefined
+        ? String(payload.potMaterial || "").trim()
+        : undefined,
+    hsnCode,
+    leafColor,
+    flowerColor,
+    lightRequirement,
+    waterRequirement,
+    plantPlacement,
+    usageArea,
+    plantAgeMonths,
+    productionCapacity,
+    packagingDetails,
     price,
     mrp,
     weight,
@@ -1129,6 +1195,10 @@ const normalizeProductPayload = (payload = {}, { partial = false } = {}) => {
     detailSections:
       payload.detailSections !== undefined && Array.isArray(payload.detailSections)
         ? payload.detailSections
+        : undefined,
+    quantityPricingSlabs:
+      payload.quantityPricingSlabs !== undefined && Array.isArray(payload.quantityPricingSlabs)
+        ? payload.quantityPricingSlabs
         : undefined,
   };
 };

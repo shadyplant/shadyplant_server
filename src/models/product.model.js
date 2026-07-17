@@ -154,9 +154,53 @@ const productDetailSectionSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    icon: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     sortOrder: {
       type: Number,
       default: 0,
+    },
+  },
+  {
+    _id: false,
+    id: false,
+  },
+);
+
+const productQuantityPricingSlabSchema = new mongoose.Schema(
+  {
+    key: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    label: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    minQuantity: {
+      type: Number,
+      required: true,
+      min: 1,
+    },
+    maxQuantity: {
+      type: Number,
+      min: 1,
+      default: null,
+    },
+    pricePerUnit: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+    note: {
+      type: String,
+      trim: true,
+      default: "",
     },
   },
   {
@@ -182,12 +226,17 @@ const productSchema = new mongoose.Schema(
     sku: {
       type: String,
       trim: true,
-      default: null,
+      default: undefined,
     },
     skuId: {
       type: String,
       trim: true,
-      default: null,
+      default: undefined,
+    },
+    hsnCode: {
+      type: String,
+      trim: true,
+      default: "",
     },
     name: {
       type: String,
@@ -214,7 +263,77 @@ const productSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    growthSpeed: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    countryOfOrigin: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    manufacturedBy: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    marketedBy: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     brand: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    potMaterial: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    leafColor: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    flowerColor: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    lightRequirement: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    waterRequirement: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    plantPlacement: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    usageArea: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    plantAgeMonths: {
+      type: Number,
+      min: 0,
+      default: null,
+    },
+    productionCapacity: {
+      type: Number,
+      min: 0,
+      default: null,
+    },
+    packagingDetails: {
       type: String,
       trim: true,
       default: "",
@@ -329,6 +448,10 @@ const productSchema = new mongoose.Schema(
     },
     detailSections: {
       type: [productDetailSectionSchema],
+      default: undefined,
+    },
+    quantityPricingSlabs: {
+      type: [productQuantityPricingSlabSchema],
       default: undefined,
     },
   },

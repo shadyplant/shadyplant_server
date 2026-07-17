@@ -21,6 +21,11 @@ const {
   saveOtpRecord,
 } = require("../repositories/reset-otp.repository");
 const {
+  clearPendingRegistration,
+  findPendingRegistration,
+  savePendingRegistration,
+} = require("../repositories/pending-registration.repository");
+const {
   clearFailedLoginAttempts,
   getLockoutState,
   recordFailedLoginAttempt,
@@ -30,7 +35,7 @@ const { env } = require("../config/env");
 const { sendGreetingEmail, sendOtpEmail } = require("../mailer");
 const { addBrevoWelcomeContact } = require("./brevo.service");
 const { ApiError } = require("../utils/apiError");
-const { createSha256Hash, generateOtp } = require("../utils/crypto");
+const { createSha256Hash, generateId, generateOtp } = require("../utils/crypto");
 const {
   comparePassword,
   hashPassword,
@@ -648,6 +653,15 @@ const sendWelcomeEmailBestEffort = async ({ to, customerName, source }) => {
   }
 };
 
+const getRegistrationTokenFromPayload = (payload = {}) =>
+  String(
+    payload.registrationToken ||
+      payload.registration_token ||
+      payload.signupToken ||
+      payload.signup_token ||
+      "",
+  ).trim();
+
 const registerManualUser = async (payload, sessionMeta) => {
   const normalizedPayload = normalizeRegistrationPayload(payload);
   validateRegistrationPayload(normalizedPayload);
@@ -680,60 +694,276 @@ const registerManualUser = async (payload, sessionMeta) => {
 
       return {
         message: "If the account can be registered, an OTP will be sent for verification.",
+        data: {
+          email: existingAccount.email,
+          expiresInMinutes: env.auth.otpExpiryMinutes,
+        },
         ...getDevOtpPayload(otp),
       };
     }
 
-    return {
-      message: "If the account can be registered, an OTP will be sent for verification.",
-    };
+    throw new ApiError(
+      409,
+      "An account with this email or phone number already exists.",
+    );
   }
 
-  const user = await createUser({
+  const registrationToken = generateId();
+  const passwordHash = await hashPassword(normalizedPayload.password);
+  const expiresAt = new Date(Date.now() + env.auth.otpExpiryMinutes * 60 * 1000);
+
+  await savePendingRegistration({
+    token: registrationToken,
     fullName: normalizedPayload.fullName,
-    phoneNumber: normalizedPayload.phoneNumber,
     email,
-    passwordHash: await hashPassword(normalizedPayload.password),
-    authProvider: "local",
-    isVerified: false,
+    phoneNumber: normalizedPayload.phoneNumber,
+    passwordHash,
+    expiresAt,
   });
 
-  // await addBrevoWelcomeContact({
-  //   id: user.id,
-  //   email: user.email,
-  //   fullName: user.fullName,
-  // });
-
-  await sendWelcomeEmailBestEffort({
-    to: user.email,
-    customerName: user.fullName,
-    source: "manual-registration",
+  console.info("[Auth] registration pending signup created", {
+    email,
+    token: registrationToken.slice(0, 8),
+    expiresInMinutes: env.auth.otpExpiryMinutes,
   });
 
   const otp = await issueOtpForPurpose({
-    identifier: user.email,
+    identifier: registrationToken,
     purpose: OTP_PURPOSES.registration,
   });
 
   await sendOtpEmailOrThrow({
-    to: user.email,
-    customerName: user.fullName,
+    to: email,
+    customerName: normalizedPayload.fullName,
     otp,
     purpose: "email verification",
     expiresInMinutes: env.auth.otpExpiryMinutes,
   });
 
-  logOtpForDevelopment("Registration", user.email, otp);
+  console.info("[Auth] registration verification email sent", {
+    email,
+    token: registrationToken.slice(0, 8),
+    transport: env.mailer.transport,
+  });
+
+  logOtpForDevelopment("Registration", email, otp);
 
   return {
     message: "If the account can be registered, an OTP will be sent for verification.",
+    data: {
+      registrationToken,
+      email,
+      expiresInMinutes: env.auth.otpExpiryMinutes,
+    },
     ...getDevOtpPayload(otp),
   };
 };
 
-const verifyRegistrationOtp = async (payload, sessionMeta) => {
+const resendRegistrationOtp = async (payload = {}) => {
+  const registrationToken = getRegistrationTokenFromPayload(payload);
   const identifier = getIdentifierFromPayload(payload);
-  validateOtpPayload({ identifier, otp: payload.otp });
+
+  console.info("[Auth] resendRegistrationOtp called", {
+    hasRegistrationToken: Boolean(registrationToken),
+    registrationToken: registrationToken ? registrationToken.slice(0, 8) : "",
+    identifier: identifier ? String(identifier).trim() : "",
+    hasIdentifier: Boolean(String(identifier || "").trim()),
+  });
+
+  if (registrationToken) {
+    const pendingRegistration = await findPendingRegistration(registrationToken);
+
+    console.info("[Auth] resendRegistrationOtp pending registration lookup", {
+      found: Boolean(pendingRegistration),
+      token: registrationToken.slice(0, 8),
+    });
+
+    if (!pendingRegistration) {
+      throw new ApiError(
+        400,
+        "Registration session expired. Please sign up again.",
+      );
+    }
+
+    console.info("[Auth] resendRegistrationOtp using pending signup", {
+      email: pendingRegistration.email,
+      token: registrationToken.slice(0, 8),
+    });
+
+    const otp = await issueOtpForPurpose({
+      identifier: registrationToken,
+      purpose: OTP_PURPOSES.registration,
+    });
+
+    await sendOtpEmailOrThrow({
+      to: pendingRegistration.email,
+      customerName: pendingRegistration.fullName,
+      otp,
+      purpose: "email verification",
+      expiresInMinutes: env.auth.otpExpiryMinutes,
+    });
+
+    console.info("[Auth] resendRegistrationOtp email send complete", {
+      identifier: pendingRegistration.email,
+      transport: env.mailer.transport,
+    });
+
+    logOtpForDevelopment("Registration", pendingRegistration.email, otp);
+
+    return {
+      message: "If the account can be registered, an OTP will be sent for verification.",
+      data: {
+        registrationToken,
+        email: pendingRegistration.email,
+        expiresInMinutes: env.auth.otpExpiryMinutes,
+      },
+      ...getDevOtpPayload(otp),
+    };
+  }
+
+  if (!identifier || !isValidEmail(identifier)) {
+    console.warn("[Auth] resendRegistrationOtp rejected invalid identifier", {
+      identifier: String(identifier || "").trim(),
+    });
+    throw new ApiError(400, "Registration session expired. Please sign up again.");
+  }
+
+  const normalizedEmail = normalizeEmail(identifier);
+  const existingAccount = await findUserByEmail(normalizedEmail);
+
+  console.info("[Auth] resendRegistrationOtp legacy lookup result", {
+    identifier: normalizedEmail,
+    found: Boolean(existingAccount),
+    authProvider: existingAccount?.authProvider || null,
+    isVerified: Boolean(existingAccount?.isVerified),
+    hasEmail: Boolean(existingAccount?.email),
+  });
+
+  if (
+    existingAccount &&
+    existingAccount.authProvider === "local" &&
+    !existingAccount.isVerified &&
+    existingAccount.email
+  ) {
+    const otp = await issueOtpForPurpose({
+      identifier: normalizeEmail(existingAccount.email),
+      purpose: OTP_PURPOSES.registration,
+    });
+
+    await sendOtpEmailOrThrow({
+      to: existingAccount.email,
+      customerName: existingAccount.fullName,
+      otp,
+      purpose: "email verification",
+      expiresInMinutes: env.auth.otpExpiryMinutes,
+    });
+
+    logOtpForDevelopment("Registration", existingAccount.email, otp);
+
+    return {
+      message: "If the account can be registered, an OTP will be sent for verification.",
+      data: {
+        email: existingAccount.email,
+        expiresInMinutes: env.auth.otpExpiryMinutes,
+      },
+      ...getDevOtpPayload(otp),
+    };
+  }
+
+  throw new ApiError(400, "Registration session expired. Please sign up again.");
+};
+
+const verifyRegistrationOtp = async (payload, sessionMeta) => {
+  const registrationToken = getRegistrationTokenFromPayload(payload);
+  const identifier = getIdentifierFromPayload(payload);
+  if (registrationToken) {
+    if (!String(payload.otp || "").trim()) {
+      throw new ApiError(400, "OTP is required.");
+    }
+  } else {
+    validateOtpPayload({
+      identifier,
+      otp: payload.otp,
+    });
+  }
+
+  if (registrationToken) {
+    const pendingRegistration = await findPendingRegistration(registrationToken);
+
+    if (!pendingRegistration) {
+      throw new ApiError(
+        400,
+        "Registration session expired. Please sign up again.",
+      );
+    }
+
+    console.info("[Auth] verifyRegistrationOtp using pending signup", {
+      email: pendingRegistration.email,
+      token: registrationToken.slice(0, 8),
+    });
+
+    await assertOtpIsValid(
+      registrationToken,
+      OTP_PURPOSES.registration,
+      payload.otp.trim(),
+    );
+
+    const email = normalizeEmail(pendingRegistration.email);
+    const existingUser = await findUserByEmail(email);
+    const existingPhoneUser = await findUserByPhone(pendingRegistration.phoneNumber);
+    const existingAccount = existingUser || existingPhoneUser;
+
+    let user;
+
+    if (existingAccount) {
+      if (existingAccount.isVerified) {
+        await clearOtpRecord(registrationToken, OTP_PURPOSES.registration);
+        await clearPendingRegistration(registrationToken);
+        return createSessionBundle(existingAccount, sessionMeta);
+      }
+
+      if (existingAccount.authProvider !== "local") {
+        throw new ApiError(
+          409,
+          "An account with this email or phone number already exists.",
+        );
+      }
+
+      user = await updateUser(existingAccount.id, {
+        fullName: pendingRegistration.fullName,
+        phoneNumber: pendingRegistration.phoneNumber,
+        passwordHash: pendingRegistration.passwordHash,
+        authProvider: "local",
+        isVerified: true,
+      });
+    } else {
+      user = await createUser({
+        fullName: pendingRegistration.fullName,
+        phoneNumber: pendingRegistration.phoneNumber,
+        email,
+        passwordHash: pendingRegistration.passwordHash,
+        authProvider: "local",
+        isVerified: true,
+      });
+    }
+
+    await sendWelcomeEmailBestEffort({
+      to: user.email,
+      customerName: user.fullName,
+      source: "manual-registration",
+    });
+
+    await clearOtpRecord(registrationToken, OTP_PURPOSES.registration);
+    await clearPendingRegistration(registrationToken);
+
+    console.info("[Auth] verifyRegistrationOtp pending signup completed", {
+      email: user.email,
+      token: registrationToken.slice(0, 8),
+      userId: user.id,
+    });
+
+    return createSessionBundle(user, sessionMeta);
+  }
 
   const { otpIdentifier, user } = await resolveUserByIdentifier(identifier);
 
@@ -918,6 +1148,9 @@ const requestPasswordReset = async (payload) => {
     return {
       message:
         "If an account matches that email or phone number, a reset code will be sent.",
+      data: {
+        accountExists: false,
+      },
     };
   }
 
@@ -925,6 +1158,9 @@ const requestPasswordReset = async (payload) => {
     return {
       message:
         "If an account matches that email or phone number, a reset code will be sent.",
+      data: {
+        accountExists: false,
+      },
     };
   }
 
@@ -951,10 +1187,13 @@ const requestPasswordReset = async (payload) => {
     ...getDevOtpPayload(otp),
     data: hasPasswordLogin || hasGoogleLogin
       ? {
+          accountExists: true,
           authProvider: user.authProvider,
           authMethods: getUserAuthMethods(user),
         }
-      : undefined,
+      : {
+          accountExists: true,
+        },
   };
 };
 
@@ -1037,6 +1276,7 @@ module.exports = {
   logoutUser,
   refreshAuthSession,
   registerManualUser,
+  resendRegistrationOtp,
   requestPasswordReset,
   resetPassword,
   updateCurrentUserProfile,

@@ -27,7 +27,9 @@ const sanitizeHomeSliderBanner = (item) => ({
   organizationId: item.organizationId,
   itemKey: item.itemKey,
   title: item.title,
+  actionType: item.actionType || "link",
   href: item.href,
+  popupKey: item.popupKey || "",
   desktopImage: item.desktopImage,
   mobileImage: item.mobileImage,
   isActive: Boolean(item.isActive),
@@ -47,6 +49,18 @@ const normalizeHomeSliderBannerPayload = (payload = {}, { partial = false } = {}
         : undefined);
   const href =
     payload.href !== undefined ? String(payload.href || "").trim() : undefined;
+  const actionTypeRaw =
+    payload.actionType !== undefined
+      ? String(payload.actionType || "").trim().toLowerCase()
+      : undefined;
+  const actionType =
+    actionTypeRaw === "popup"
+      ? "popup"
+      : actionTypeRaw === "link"
+        ? "link"
+        : undefined;
+  const popupKey =
+    payload.popupKey !== undefined ? String(payload.popupKey || "").trim() : undefined;
   const desktopImage =
     payload.desktopImage !== undefined
       ? String(payload.desktopImage || "").trim()
@@ -77,7 +91,9 @@ const normalizeHomeSliderBannerPayload = (payload = {}, { partial = false } = {}
   return {
     itemKey,
     title,
+    actionType,
     href,
+    popupKey,
     desktopImage,
     mobileImage,
     isActive: payload.isActive !== undefined ? Boolean(payload.isActive) : undefined,
@@ -148,7 +164,9 @@ const createAdminHomeSliderBanner = async (organizationId, payload = {}) => {
     organizationId,
     itemKey: normalizedPayload.itemKey,
     title: normalizedPayload.title,
+    actionType: normalizedPayload.actionType || "link",
     href: normalizedPayload.href || "",
+    popupKey: normalizedPayload.popupKey || "",
     desktopImage: normalizedPayload.desktopImage,
     mobileImage: normalizedPayload.mobileImage,
     isActive:

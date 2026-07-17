@@ -25,6 +25,7 @@ const {
   getCustomerCartPaymentAttemptForAdmin,
   getHomeCategoryForAdmin,
   getHomeSliderBannerForAdmin,
+  getLawnGrassPageSettingsForAdmin,
   getOrderForAdmin,
   getPaymentGatewaySettingsForAdmin,
   getProductForAdmin,
@@ -55,6 +56,7 @@ const {
   updateCouponForAdmin,
   updateHomeCategoryForAdmin,
   updateHomeSliderBannerForAdmin,
+  updateLawnGrassPageSettingsForAdmin,
   updateOrderForAdmin,
   updatePaymentGatewaySettingsForAdmin,
   updateProductForAdmin,
@@ -63,6 +65,39 @@ const {
   updateStaffForAdmin,
   completeMediaUploadSessionForAdmin,
 } = require("../controllers/admin.controller");
+const {
+  createCountryForAdmin,
+  createStateForAdmin,
+  deleteCountryForAdmin,
+  deleteStateForAdmin,
+  listCountriesForAdminController,
+  listStatesForAdminController,
+  updateCountryForAdmin,
+  updateStateForAdmin,
+} = require("../controllers/shipping-restriction.controller");
+const {
+  createShippingZoneForAdmin,
+  deleteShippingZoneForAdmin,
+  listShippingZonesForAdmin,
+  updateShippingZoneForAdmin,
+} = require("../controllers/shipping-zone.controller");
+const {
+  createDeliveryChargeSlabController,
+  deleteDeliveryChargeSlabController,
+  getDeliveryChargeProfileController,
+  listDeliveryChargeProfilesController,
+  listDeliveryChargeSlabsController,
+  updateDeliveryChargeProfileController,
+  updateDeliveryChargeSlabController,
+} = require("../controllers/delivery-charge.controller");
+const {
+  createShippingRuleForAdmin,
+  deleteShippingRuleForAdmin,
+  listShippingRegionsForAdmin,
+  listShippingRulesForAdmin,
+  updateShippingRegionForAdmin,
+  updateShippingRuleForAdmin,
+} = require("../controllers/shipping-restriction.controller");
 const {
   attachProductSyncRequestContext,
   handleProductSyncIdempotency,
@@ -97,6 +132,168 @@ router.patch(
   requireStaffAuth,
   requireStaffRoles(["manager"]),
   updatePaymentGatewaySettingsForAdmin,
+);
+router.get(
+  "/shipping/countries",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  listCountriesForAdminController,
+);
+router.post(
+  "/shipping/countries",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  createCountryForAdmin,
+);
+router.patch(
+  "/shipping/countries/:countryId",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  updateCountryForAdmin,
+);
+router.delete(
+  "/shipping/countries/:countryId",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  deleteCountryForAdmin,
+);
+router.get(
+  "/shipping/states",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  listStatesForAdminController,
+);
+router.post(
+  "/shipping/states",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  createStateForAdmin,
+);
+router.patch(
+  "/shipping/states/:stateId",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  updateStateForAdmin,
+);
+router.delete(
+  "/shipping/states/:stateId",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  deleteStateForAdmin,
+);
+router.get(
+  "/shipping/regions",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  listShippingRegionsForAdmin,
+);
+router.patch(
+  "/shipping/regions/:regionId",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  updateShippingRegionForAdmin,
+);
+router.get(
+  "/shipping/rules",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  listShippingRulesForAdmin,
+);
+router.post(
+  "/shipping/rules",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  createShippingRuleForAdmin,
+);
+router.patch(
+  "/shipping/rules/:ruleId",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  updateShippingRuleForAdmin,
+);
+router.delete(
+  "/shipping/rules/:ruleId",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  deleteShippingRuleForAdmin,
+);
+router.get(
+  "/shipping-zones",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  listShippingZonesForAdmin,
+);
+router.post(
+  "/shipping-zones",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  createShippingZoneForAdmin,
+);
+router.patch(
+  "/shipping-zones/:zoneId",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  updateShippingZoneForAdmin,
+);
+router.delete(
+  "/shipping-zones/:zoneId",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  deleteShippingZoneForAdmin,
+);
+router.get(
+  "/delivery-charge/profiles",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  listDeliveryChargeProfilesController,
+);
+router.get(
+  "/delivery-charge/profiles/:profileCode",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  getDeliveryChargeProfileController,
+);
+router.patch(
+  "/delivery-charge/profiles/:profileCode",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  updateDeliveryChargeProfileController,
+);
+router.get(
+  "/delivery-charge/slabs",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  listDeliveryChargeSlabsController,
+);
+router.post(
+  "/delivery-charge/slabs",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  createDeliveryChargeSlabController,
+);
+router.patch(
+  "/delivery-charge/slabs/:slabId",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  updateDeliveryChargeSlabController,
+);
+router.delete(
+  "/delivery-charge/slabs/:slabId",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  deleteDeliveryChargeSlabController,
+);
+router.get(
+  "/lawn-grass-page",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  getLawnGrassPageSettingsForAdmin,
+);
+router.patch(
+  "/lawn-grass-page",
+  requireStaffAuth,
+  requireStaffRoles(["catalog"]),
+  updateLawnGrassPageSettingsForAdmin,
 );
 router.post(
   "/mailer/draft",

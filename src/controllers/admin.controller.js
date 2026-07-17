@@ -63,6 +63,10 @@ const {
   listAdminHomeSliderBanners,
   updateAdminHomeSliderBanner,
 } = require("../services/home-slider-banner.service");
+const {
+  getLawnGrassPageSettings,
+  updateLawnGrassPageProduct,
+} = require("../services/lawn-grass-page.service");
 const { cacheProductSyncResponse } = require("../middleware/product-sync.middleware");
 const { asyncHandler } = require("../utils/asyncHandler");
 const {
@@ -144,6 +148,27 @@ const updatePaymentGatewaySettingsForAdmin = asyncHandler(async (req, res) => {
 
   res.status(200).json({
     message: "Payment gateway settings updated successfully.",
+    data: { settings },
+  });
+});
+
+const getLawnGrassPageSettingsForAdmin = asyncHandler(async (_req, res) => {
+  const settings = await getLawnGrassPageSettings();
+
+  res.status(200).json({
+    message: "Lawn grass page settings fetched successfully.",
+    data: { settings },
+  });
+});
+
+const updateLawnGrassPageSettingsForAdmin = asyncHandler(async (req, res) => {
+  const settings = await updateLawnGrassPageProduct({
+    productId: req.body?.productId,
+    updatedByStaffAccountId: req.staff.staffAccountId,
+  });
+
+  res.status(200).json({
+    message: "Lawn grass page settings updated successfully.",
     data: { settings },
   });
 });
@@ -716,6 +741,7 @@ module.exports = {
   getPaymentGatewaySettingsForAdmin,
   getHomeCategoryForAdmin,
   getHomeSliderBannerForAdmin,
+  getLawnGrassPageSettingsForAdmin,
   getOrderForAdmin,
   getProductForAdmin,
   getProductStockSnapshotForAdmin,
@@ -743,6 +769,7 @@ module.exports = {
   updateCouponForAdmin,
   updateHomeCategoryForAdmin,
   updateHomeSliderBannerForAdmin,
+  updateLawnGrassPageSettingsForAdmin,
   createMediaUploadSessionForAdmin,
   completeMediaUploadSessionForAdmin,
   generateAdminMailDraftForAdmin,

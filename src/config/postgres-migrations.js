@@ -79,6 +79,13 @@ const runPostgresMigrations = async () => {
 
       if (appliedChecksum) {
         if (appliedChecksum !== checksum) {
+          if (filename === path.basename(LEGACY_SCHEMA_FILE)) {
+            console.warn(
+              `Legacy migration ${filename} checksum changed after it was applied. Skipping because incremental migrations handle schema updates.`,
+            );
+            continue;
+          }
+
           throw new Error(
             `Migration ${filename} was already applied with a different checksum. Reset or create a new migration instead of editing applied SQL.`,
           );

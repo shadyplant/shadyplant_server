@@ -15,6 +15,10 @@ router.post("/", async (req, res) => {
     const rawDistance = req.body?.distance ?? req.body?.distance_km;
     const rawLat = req.body?.lat;
     const rawLng = req.body?.lng;
+    const rawProfileCode =
+      req.body?.profileCode ??
+      req.body?.profile_code ??
+      req.body?.deliveryProfileCode;
 
     const weight = Number(rawWeight);
     const hasDirectDistance =
@@ -50,12 +54,12 @@ router.post("/", async (req, res) => {
         ? await resolveDeliveryState({ lat: rawLat, lng: rawLng })
         : "");
 
-    if (!resolvedState) {
+    if (!resolvedState && !rawProfileCode) {
       return res.status(400).json({
         ok: false,
         success: false,
         message:
-          "State is required. Pass state from the frontend or provide lat and lng for geo lookup.",
+          "State is required. Pass state from the frontend, provide lat and lng for geo lookup, or send a delivery profile code.",
       });
     }
 
@@ -67,7 +71,10 @@ router.post("/", async (req, res) => {
       throw new ApiError(400, "distance must be a positive numeric value.");
     }
 
-    const result = calculateTransportCharge(weight, distanceKm, resolvedState);
+    const result = calculateTransportCharge(weight, distanceKm, {
+      state: resolvedState,
+      profileCode: rawProfileCode,
+    });
     const statusCode = result.success ? 200 : 400;
     const roundedDistanceKm = Number.isFinite(distanceKm)
       ? Number(distanceKm.toFixed(2))

@@ -11,6 +11,7 @@ const {
   sessionUser,
   refresh,
   register,
+  resendRegisterOtp,
   verifyRegisterOtp,
   updateMe,
 } = require("../controllers/auth.controller");
@@ -19,12 +20,14 @@ const {
   forgotPasswordLimiter,
   loginLimiter,
   refreshLimiter,
+  registerResendLimiter,
   registerLimiter,
 } = require("../middleware/rateLimiters");
 
 const router = express.Router();
 
 router.post("/register", registerLimiter, register);
+router.post("/register/resend-otp", registerResendLimiter, resendRegisterOtp);
 router.post("/register/verify-otp", registerLimiter, verifyRegisterOtp);
 router.post("/login", loginLimiter, login);
 router.post("/google", loginLimiter, googleLogin);
