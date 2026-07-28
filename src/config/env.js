@@ -324,6 +324,7 @@ const env = {
       process.env.PAYMENT_GATEWAY_ORDER_EXPIRE_AFTER_SECONDS,
       1200,
     ),
+    callbackOrigin: String(process.env.PAYMENT_GATEWAY_CALLBACK_ORIGIN || "https://shadyplant.com").trim(),
     phonepe: {
       clientId: String(process.env.PHONEPE_CLIENT_ID || "").trim(),
       clientVersion: String(process.env.PHONEPE_CLIENT_VERSION || "1").trim(),

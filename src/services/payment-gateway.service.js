@@ -449,10 +449,10 @@ const buildPaymentReturnUrl = (
   paymentAttemptId,
   fallbackPath = "/order-summary",
 ) => {
-  const baseOrigin = normalizeString(env.clientOrigins[0]).replace(/\/+$/, "");
+  const baseOrigin = normalizeString(env.paymentGateway.callbackOrigin).replace(/\/\/+$/, "");
 
   if (!baseOrigin) {
-    throw new ApiError(500, "Client origin is not configured for payment return URLs.");
+    throw new ApiError(500, "Payment callback origin is not configured for payment return URLs.");
   }
 
   const safePath = sanitizeReturnPath(returnPath, fallbackPath);
