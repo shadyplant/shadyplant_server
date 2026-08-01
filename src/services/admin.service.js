@@ -75,6 +75,7 @@ const {
 } = require("../repositories/payment.repository");
 const { env } = require("../config/env");
 const { sendEmail, sendGreetingEmail } = require("../mailer");
+const { sendPushNotificationToRecipients } = require("./push-notification.service");
 const { addBrevoWelcomeContact } = require("./brevo.service");
 const { ApiError } = require("../utils/apiError");
 const { comparePassword, hashPassword, validatePasswordStrength } = require("../utils/password");
@@ -2533,6 +2534,19 @@ const sendAdminEmail = async (payload = {}) =>
     source: payload.source || "admin-mailer",
   });
 
+const sendAdminPushNotification = async (payload = {}) =>
+  sendPushNotificationToRecipients({
+    recipients: payload.recipients || payload.to || [],
+    title: payload.title,
+    description: payload.description || payload.body,
+    link: payload.link || payload.url,
+    buttonLabel: payload.buttonLabel,
+    buttonColor: payload.buttonColor,
+    logoUrl: payload.logoUrl || payload.logo || payload.imageUrl,
+    vibrate: payload.vibrate,
+    source: payload.source || "admin-push",
+  });
+
 const getAdminCustomer = async (customerId) => {
   const customer = await findUserById(customerId);
 
@@ -2906,6 +2920,7 @@ module.exports = {
   generateAdminMailDraft,
   previewAdminCustomerCartCheckout,
   removeAdminCustomerCartItem,
+  sendAdminPushNotification,
   sendAdminEmail,
   setupInitialAdminOwner,
   syncAdminProductsFromSheet,

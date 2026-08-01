@@ -51,6 +51,7 @@ const {
   syncProductsForAdmin,
   generateAdminMailDraftForAdmin,
   sendAdminEmailForAdmin,
+  sendAdminPushNotificationForAdmin,
   updateCustomerForAdmin,
   updateCustomerCartItemForAdmin,
   updateCouponForAdmin,
@@ -306,6 +307,12 @@ router.post(
   requireStaffAuth,
   requireStaffRoles(["manager"]),
   sendAdminEmailForAdmin,
+);
+router.post(
+  "/notifications/push/send",
+  requireStaffAuth,
+  requireStaffRoles(["manager"]),
+  sendAdminPushNotificationForAdmin,
 );
 
 router.post(

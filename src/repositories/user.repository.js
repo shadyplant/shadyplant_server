@@ -164,6 +164,25 @@ const findUserByEmail = async (email) => {
   return mapUserRow(result.rows[0]);
 };
 
+const findUsersByEmails = async (emails = []) => {
+  const normalizedEmails = [...new Set(
+    (Array.isArray(emails) ? emails : [])
+      .map((email) => String(email || "").trim().toLowerCase())
+      .filter(Boolean),
+  )];
+
+  if (!normalizedEmails.length) {
+    return [];
+  }
+
+  const result = await query(
+    "SELECT * FROM users WHERE LOWER(email) = ANY($1::text[])",
+    [normalizedEmails],
+  );
+
+  return result.rows.map(mapUserRow).filter(Boolean);
+};
+
 const findUserByPhone = async (phoneNumber) => {
   const result = await query(
     "SELECT * FROM users WHERE phone_number = $1 LIMIT 1",
@@ -290,6 +309,7 @@ const updateUser = async (id, updates) => {
 module.exports = {
   createUser,
   findUserByEmail,
+  findUsersByEmails,
   findUserByGoogleUid,
   findUserById,
   findUserByPhone,

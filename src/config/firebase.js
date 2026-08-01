@@ -1,5 +1,6 @@
 const { cert, getApp, getApps, initializeApp } = require("firebase-admin/app");
 const { getAuth } = require("firebase-admin/auth");
+const { getMessaging } = require("firebase-admin/messaging");
 const { env } = require("./env");
 
 const loadServiceAccount = () => ({
@@ -27,4 +28,13 @@ const initializeFirebase = () => {
   return getAuth(app);
 };
 
-module.exports = { initializeFirebase, initializeFirebaseApp };
+const initializeFirebaseMessaging = () => {
+  const app = initializeFirebaseApp();
+  return getMessaging(app);
+};
+
+module.exports = {
+  initializeFirebase,
+  initializeFirebaseApp,
+  initializeFirebaseMessaging,
+};

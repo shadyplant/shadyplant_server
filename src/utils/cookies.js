@@ -19,7 +19,7 @@ const clearRefreshCookie = (res) => {
 const getStaffAccessCookieOptions = () => ({
   httpOnly: true,
   secure: env.isProduction,
-  sameSite: env.isProduction ? "strict" : "lax",
+  sameSite: env.isProduction ? "none" : "lax",
   path: "/api/v1/admin",
   maxAge: env.staff.accessTokenMaxAgeMs,
 });

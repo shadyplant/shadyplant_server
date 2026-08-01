@@ -39,6 +39,7 @@ const {
   setupInitialAdminOwner,
   syncAdminProductsFromSheet,
   sendAdminEmail,
+  sendAdminPushNotification,
   updateAdminCustomer,
   updateAdminCustomerCartItem,
   updateAdminCoupon,
@@ -85,6 +86,7 @@ const loginAdmin = asyncHandler(async (req, res) => {
   res.status(200).json({
     message: "Admin login successful.",
     data: {
+      accessToken: payload.accessToken,
       staff: payload.staff,
       expiresIn: payload.expiresIn,
     },
@@ -107,6 +109,7 @@ const setupInitialAdminOwnerController = asyncHandler(async (req, res) => {
   res.status(201).json({
     message: "Initial admin owner created successfully.",
     data: {
+      accessToken: payload.accessToken,
       staff: payload.staff,
       expiresIn: payload.expiresIn,
     },
@@ -185,6 +188,30 @@ const sendAdminEmailForAdmin = asyncHandler(async (req, res) => {
 
   res.status(200).json({
     message: "Email processed successfully.",
+    data: { result },
+  });
+});
+
+const sendAdminPushNotificationForAdmin = asyncHandler(async (req, res) => {
+  const result = await sendAdminPushNotification({
+    recipients: req.body?.recipients,
+    to: req.body?.to,
+    title: req.body?.title,
+    description: req.body?.description,
+    body: req.body?.body,
+    link: req.body?.link,
+    url: req.body?.url,
+    buttonLabel: req.body?.buttonLabel,
+    buttonColor: req.body?.buttonColor,
+    logoUrl: req.body?.logoUrl,
+    logo: req.body?.logo,
+    imageUrl: req.body?.imageUrl,
+    vibrate: req.body?.vibrate,
+    source: req.body?.source || "admin-push",
+  });
+
+  res.status(200).json({
+    message: "Push notification processed successfully.",
     data: { result },
   });
 });
@@ -774,6 +801,7 @@ module.exports = {
   completeMediaUploadSessionForAdmin,
   generateAdminMailDraftForAdmin,
   sendAdminEmailForAdmin,
+  sendAdminPushNotificationForAdmin,
   updateOrderForAdmin,
   updatePaymentGatewaySettingsForAdmin,
   updateProductForAdmin,

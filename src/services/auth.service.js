@@ -34,6 +34,7 @@ const { initializeFirebase } = require("../config/firebase");
 const { env } = require("../config/env");
 const { sendGreetingEmail, sendOtpEmail } = require("../mailer");
 const { addBrevoWelcomeContact } = require("./brevo.service");
+const { registerPushDeviceToken } = require("./push-device.service");
 const { ApiError } = require("../utils/apiError");
 const { createSha256Hash, generateId, generateOtp } = require("../utils/crypto");
 const {
@@ -1140,6 +1141,15 @@ const updateCurrentUserProfile = async (userId, payload) => {
   return sanitizeUser(updatedUser);
 };
 
+const registerCurrentUserPushToken = async (userId, payload = {}) => {
+  const result = await registerPushDeviceToken({
+    userId,
+    payload,
+  });
+
+  return result;
+};
+
 const requestPasswordReset = async (payload) => {
   const identifier = getIdentifierFromPayload(payload);
   const { otpIdentifier, user } = await resolveUserByIdentifier(identifier);
@@ -1279,6 +1289,7 @@ module.exports = {
   resendRegistrationOtp,
   requestPasswordReset,
   resetPassword,
+  registerCurrentUserPushToken,
   updateCurrentUserProfile,
   verifyRegistrationOtp,
   verifyPasswordResetOtp,

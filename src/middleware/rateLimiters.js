@@ -51,6 +51,9 @@ module.exports = {
   loginLimiter: createAuthLimiter(
     "Too many login attempts. Please wait a minute and try again.",
   ),
+  pushTokenLimiter: createAuthLimiter(
+    "Too many push token registrations. Please wait a minute and try again.",
+  ),
   productSyncLimiter,
   refreshLimiter,
   registerResendLimiter: createAuthLimiter(
