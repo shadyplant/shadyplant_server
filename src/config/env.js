@@ -250,6 +250,14 @@ const env = {
       .trim(),
   },
   googleAuth: {
+    clientIds: String(
+      process.env.GOOGLE_AUTH_CLIENT_IDS ||
+        process.env.GOOGLE_AUTH_CLIENT_ID ||
+        "",
+    )
+      .split(",")
+      .map((clientId) => clientId.trim())
+      .filter(Boolean),
     requiredHostedDomain: String(
       process.env.GOOGLE_REQUIRED_HOSTED_DOMAIN || "",
     ).trim().toLowerCase(),
@@ -409,6 +417,7 @@ env.isFirebaseConfigured = Boolean(
     env.firebase.clientEmail &&
     env.firebase.privateKey,
 );
+env.googleAuth.hasConfiguredClientIds = env.googleAuth.clientIds.length > 0;
 env.paymentGateway.mode =
   env.paymentGateway.mode === "production" ? "production" : "sandbox";
 env.paymentGateway.provider = env.paymentGateway.provider || "phonepe";

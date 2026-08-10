@@ -32,6 +32,7 @@ const {
 } = require("../repositories/login-attempt.repository");
 const { initializeFirebase } = require("../config/firebase");
 const { env } = require("../config/env");
+const { OAuth2Client } = require("google-auth-library");
 const { sendGreetingEmail, sendOtpEmail } = require("../mailer");
 const { addBrevoWelcomeContact } = require("./brevo.service");
 const { registerPushDeviceToken } = require("./push-device.service");
@@ -59,6 +60,7 @@ const {
   assertUserAccountIsActive,
   resolveUserPaymentAccess,
 } = require("./user-account.service");
+const googleOAuthClient = new OAuth2Client();
 
 const getUserAuthMethods = (user) => ({
   hasPasswordLogin: Boolean(user?.passwordHash),
@@ -386,7 +388,23 @@ const validateProfileUpdatePayload = ({
 const getGoogleIdTokenFromPayload = (payload = {}) =>
   String(payload.idToken || payload.id_token || payload.credential || "").trim();
 
-const assertGoogleTokenClaims = (decodedToken) => {
+const decodeJwtPayload = (token) => {
+  const parts = String(token || "").trim().split(".");
+
+  if (parts.length < 2) {
+    return null;
+  }
+
+  try {
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+    return JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
+  } catch {
+    return null;
+  }
+};
+
+const assertFirebaseGoogleTokenClaims = (decodedToken) => {
   const provider = decodedToken.firebase?.sign_in_provider;
 
   if (provider !== "google.com") {
@@ -416,6 +434,26 @@ const assertGoogleTokenClaims = (decodedToken) => {
   }
 };
 
+const assertNativeGoogleTokenClaims = (decodedToken) => {
+  const audience = String(decodedToken.aud || "").trim();
+  const issuer = String(decodedToken.iss || "").trim();
+
+  if (!env.googleAuth.hasConfiguredClientIds) {
+    throw new ApiError(
+      503,
+      "Google sign-in is not configured on the server. Set GOOGLE_AUTH_CLIENT_IDS.",
+    );
+  }
+
+  if (!env.googleAuth.clientIds.includes(audience)) {
+    throw new ApiError(401, "Google ID token audience is invalid.");
+  }
+
+  if (!["accounts.google.com", "https://accounts.google.com"].includes(issuer)) {
+    throw new ApiError(401, "Google ID token issuer is invalid.");
+  }
+};
+
 const verifyGoogleIdentityToken = async (payload) => {
   const idToken = getGoogleIdTokenFromPayload(payload);
 
@@ -423,36 +461,100 @@ const verifyGoogleIdentityToken = async (payload) => {
     throw new ApiError(400, "Google ID token is required.");
   }
 
-  let firebaseAuth;
-  try {
-    firebaseAuth = initializeFirebase();
-  } catch (error) {
-    throw new ApiError(503, "Google sign-in is not configured on the server.");
+  const unverifiedPayload = decodeJwtPayload(idToken);
+  const unverifiedAudience = String(unverifiedPayload?.aud || "").trim();
+  const looksLikeNativeGoogleToken = env.googleAuth.clientIds.includes(
+    unverifiedAudience,
+  );
+  const looksLikeFirebaseToken =
+    Boolean(env.firebase.projectId) &&
+    unverifiedAudience === env.firebase.projectId;
+
+  let firebaseAuth = null;
+  if (!looksLikeNativeGoogleToken || looksLikeFirebaseToken) {
+    try {
+      firebaseAuth = initializeFirebase();
+    } catch {
+      firebaseAuth = null;
+    }
   }
 
-  try {
-    const decodedToken = await firebaseAuth.verifyIdToken(idToken);
-    assertGoogleTokenClaims(decodedToken);
-    return decodedToken;
-  } catch (error) {
-    if (error instanceof ApiError) {
-      throw error;
-    }
+  let nativeGoogleError = null;
+  let firebaseError = null;
 
-    if (error?.code === "auth/id-token-expired") {
-      throw new ApiError(401, "Google ID token is expired.");
-    }
+  if (looksLikeNativeGoogleToken) {
+    try {
+      const ticket = await googleOAuthClient.verifyIdToken({
+        idToken,
+        audience: env.googleAuth.clientIds,
+      });
+      const decodedToken = ticket.getPayload();
 
-    if (String(error?.code || "").startsWith("auth/")) {
-      throw new ApiError(401, "Google ID token is invalid.");
-    }
+      if (!decodedToken) {
+        throw new ApiError(401, "Google ID token is invalid.");
+      }
 
-    throw error;
+      assertNativeGoogleTokenClaims(decodedToken);
+      return { decodedToken, tokenSource: "google-oauth" };
+    } catch (error) {
+      nativeGoogleError = error;
+    }
   }
+
+  if (firebaseAuth) {
+    try {
+      const decodedToken = await firebaseAuth.verifyIdToken(idToken);
+      assertFirebaseGoogleTokenClaims(decodedToken);
+      return { decodedToken, tokenSource: "firebase" };
+    } catch (error) {
+      firebaseError = error;
+    }
+  }
+
+  if (nativeGoogleError instanceof ApiError) {
+    throw nativeGoogleError;
+  }
+
+  if (nativeGoogleError?.code === "auth/id-token-expired" || firebaseError?.code === "auth/id-token-expired") {
+    throw new ApiError(401, "Google ID token is expired.");
+  }
+
+  if (firebaseError instanceof ApiError) {
+    throw firebaseError;
+  }
+
+  if (nativeGoogleError?.code === "invalid_token" || nativeGoogleError?.code === "GoogleIdTokenError") {
+    throw new ApiError(401, "Google ID token is invalid.");
+  }
+
+  if (firebaseError?.code === "auth/argument-error" || String(firebaseError?.code || "").startsWith("auth/")) {
+    throw new ApiError(401, "Google ID token is invalid.");
+  }
+
+  if (looksLikeNativeGoogleToken && !env.googleAuth.hasConfiguredClientIds) {
+    throw new ApiError(
+      503,
+      "Google sign-in is not configured on the server. Set GOOGLE_AUTH_CLIENT_IDS.",
+    );
+  }
+
+  if (nativeGoogleError) {
+    throw nativeGoogleError;
+  }
+
+  if (firebaseError) {
+    throw firebaseError;
+  }
+
+  throw new ApiError(401, "Google ID token is invalid.");
 };
 
 const syncUserFromGoogleIdentity = async (decodedToken) => {
-  if (!decodedToken.uid) {
+  const googleUid = String(
+    decodedToken.sub || decodedToken.user_id || decodedToken.uid || "",
+  ).trim();
+
+  if (!googleUid) {
     throw new ApiError(401, "Google ID token is invalid.");
   }
 
@@ -461,7 +563,6 @@ const syncUserFromGoogleIdentity = async (decodedToken) => {
   }
 
   const email = normalizeEmail(decodedToken.email);
-  const googleUid = decodedToken.uid;
   const userByGoogleUid = await findUserByGoogleUid(googleUid);
   const userByEmail = await findUserByEmail(email);
 
@@ -1032,7 +1133,7 @@ const loginManualUser = async (payload, sessionMeta) => {
 };
 
 const loginWithGoogle = async (payload, sessionMeta) => {
-  const decodedToken = await verifyGoogleIdentityToken(payload);
+  const { decodedToken } = await verifyGoogleIdentityToken(payload);
   const user = await syncUserFromGoogleIdentity(decodedToken);
   return createSessionBundle(user, sessionMeta);
 };
@@ -1136,9 +1237,35 @@ const updateCurrentUserProfile = async (userId, payload) => {
   assertUserAccountIsActive(user);
 
   const nextProfile = validateProfileUpdatePayload(payload);
-  const updatedUser = await updateUser(userId, nextProfile);
 
-  return sanitizeUser(updatedUser);
+  if (nextProfile.phoneNumber) {
+    const existingPhoneUser = await findUserByPhone(nextProfile.phoneNumber);
+
+    if (existingPhoneUser && existingPhoneUser.id !== userId) {
+      throw new ApiError(
+        409,
+        "Phone number is already linked to another account.",
+      );
+    }
+  }
+
+  try {
+    const updatedUser = await updateUser(userId, nextProfile);
+    return sanitizeUser(updatedUser);
+  } catch (error) {
+    if (
+      error?.code === "23505" &&
+      String(error.constraint || "").includes("users_phone_number_unique_idx")
+    ) {
+      throw new ApiError(
+        409,
+        "Phone number is already linked to another account.",
+      );
+    }
+
+    throw error;
+  }
+
 };
 
 const registerCurrentUserPushToken = async (userId, payload = {}) => {

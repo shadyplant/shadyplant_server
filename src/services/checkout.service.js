@@ -34,7 +34,11 @@ const {
   getDistanceKmForLocation,
   resolveDeliveryState,
 } = require("./delivery.service");
-const { notifyOrderPrimaryStatus, serializeOrder } = require("./order.service");
+const {
+  createOrderStatusNotification,
+  notifyOrderPrimaryStatus,
+  serializeOrder,
+} = require("./order.service");
 const {
   buildPaymentReturnUrl,
   createRemotePaymentOrder,
@@ -327,7 +331,14 @@ const getCartLineItems = async (userId) => {
     const unitDiscount = Math.max(0, unitMrp - unitPrice);
     const discountPercent =
       unitMrp > 0 ? Number(((unitDiscount / unitMrp) * 100).toFixed(2)) : 0;
-
+    const itemImages = [...new Set(
+      [
+        ...(Array.isArray(product.images) ? product.images : []),
+        product.image,
+      ]
+        .map((image) => String(image || "").trim())
+        .filter(Boolean),
+    )].slice(0, 3);
     return {
       productId: product.id,
       variantId: resolvedVariant.variantId,
@@ -335,7 +346,8 @@ const getCartLineItems = async (userId) => {
       optionSelections: resolvedVariant.optionSelections,
       name: product.name,
       category: product.category,
-      image: product.image,
+      image: itemImages[0] || product.image,
+      images: itemImages,
       packLabel: resolvedVariant.packLabel || product.packLabel,
       unit: product.unit,
       quantity,
@@ -597,8 +609,9 @@ const placeCartOrderCashOnDelivery = async (userId, payload = {}) => {
   }
 
   await consumeUserCartItems(userId, preparedOrder.orderItems);
-  const serializedOrder = serializeOrder(order);
+  const serializedOrder = await serializeOrder(order);
   await notifyOrderPrimaryStatus(serializedOrder, serializedOrder.currentStatus);
+  await createOrderStatusNotification(order, serializedOrder.currentStatus);
   return serializedOrder;
 };
 
@@ -789,3 +802,4 @@ module.exports = {
   placeCartOrderCashOnDelivery,
   previewCartCheckout,
 };
+

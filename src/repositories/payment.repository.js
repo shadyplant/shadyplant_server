@@ -2,6 +2,12 @@ const { query } = require("../config/postgres");
 const { generateId } = require("../utils/crypto");
 const { buildUpdateStatement } = require("../utils/sql");
 
+const isUuid = (value) =>
+  typeof value === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value.trim(),
+  );
+
 const parsePositiveInteger = (value) => {
   const parsedValue = Number.parseInt(value ?? "", 10);
 
@@ -105,6 +111,10 @@ const createPaymentAttempt = async (paymentAttemptData) => {
 };
 
 const findPaymentAttemptById = async (paymentAttemptId) => {
+  if (!isUuid(paymentAttemptId)) {
+    return null;
+  }
+
   const result = await query(
     "SELECT * FROM payment_attempts WHERE id = $1 LIMIT 1",
     [paymentAttemptId],

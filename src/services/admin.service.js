@@ -95,6 +95,9 @@ const {
   previewCartCheckout,
 } = require("./checkout.service");
 const {
+  reconcilePaymentAttemptStatus,
+} = require("./payment.service");
+const {
   ORDER_CANCELLATION_REASONS,
   ORDER_STATUS_KEYS,
   REFUND_REQUEST_STATUSES,
@@ -107,6 +110,9 @@ const {
   normalizeStoredTrackingTimeline,
   serializeOrder,
 } = require("./order.service");
+const {
+  createOrderStatusNotification,
+} = require("./notification.service");
 const { syncProductsFromSheet } = require("./product-sync.service");
 const {
   CUSTOMER_CATEGORIES,
@@ -132,8 +138,6 @@ const {
   normalizeWholeAmount,
   resolveCouponEffectiveStatus,
 } = require("./coupon.service");
-const { seedHomeCategoryItemsForOrganization } = require("./home-category.service");
-const { seedHomeSliderBannersForOrganization } = require("./home-slider-banner.service");
 const { signStaffAccessToken } = require("./token.service");
 
 const STAFF_ROLES = ["owner", "admin", "manager", "catalog", "operations", "support"];
@@ -1386,9 +1390,6 @@ const setupInitialAdminOwner = async (payload = {}) => {
     role: "owner",
     status: "active",
   });
-  await seedHomeCategoryItemsForOrganization(organization.id, organization.slug);
-  await seedHomeSliderBannersForOrganization(organization.id, organization.slug);
-
   return {
     accessToken: signStaffAccessToken(createdStaffAccount),
     staff: sanitizeStaffAccount(createdStaffAccount, organization),
@@ -1798,9 +1799,10 @@ const deleteAdminReview = async (reviewId) => {
 const listAdminOrders = async (payload = {}) => {
   const pagination = normalizeAdminPagination(payload);
   const { rows, totalCount } = await listAllOrders(pagination);
+  const orders = await Promise.all(rows.map(serializeOrder));
 
   return {
-    orders: rows.map(serializeOrder),
+    orders,
     pagination: {
       limit: pagination.limit,
       offset: pagination.offset,
@@ -1817,7 +1819,7 @@ const listAdminTransactions = async (payload = {}) => {
     listAllOrders(dateRange),
     listAllPaymentAttempts(dateRange),
   ]);
-  const serializedOrders = orderResult.rows.map(serializeOrder);
+  const serializedOrders = await Promise.all(orderResult.rows.map(serializeOrder));
   const paymentAttempts = paymentAttemptResult.rows;
   const latestPaymentAttemptByOrderId = new Map();
 
@@ -1909,7 +1911,7 @@ const listAdminSalesReport = async (payload = {}) => {
     listAllOrders(dateRange),
     listAllPaymentAttempts(dateRange),
   ]);
-  const serializedOrders = orderResult.rows.map(serializeOrder);
+  const serializedOrders = await Promise.all(orderResult.rows.map(serializeOrder));
   const paymentAttempts = paymentAttemptResult.rows;
   const latestPaymentAttemptByOrderId = new Map();
 
@@ -2184,7 +2186,7 @@ const getAdminOrder = async (orderId) => {
     throw new ApiError(404, "Order not found.");
   }
 
-  return serializeOrder(order);
+  return await serializeOrder(order);
 };
 
 const updateAdminOrder = async (orderId, payload = {}) => {
@@ -2442,11 +2444,12 @@ const updateAdminOrder = async (orderId, payload = {}) => {
   }
 
   const updatedOrder = await updateOrder(orderId, updates);
-  const serializedOrder = serializeOrder(updatedOrder);
+  const serializedOrder = await serializeOrder(updatedOrder);
   const serializedNextStatus = normalizeOrderCurrentStatus(serializedOrder.currentStatus);
 
   if (serializedNextStatus && serializedNextStatus !== previousStatus) {
     await notifyOrderPrimaryStatus(serializedOrder, serializedNextStatus);
+    await createOrderStatusNotification(updatedOrder, serializedNextStatus);
   }
 
   return serializedOrder;
@@ -2621,10 +2624,14 @@ const getAdminCustomerCartPaymentAttempt = async (customerId, paymentAttemptId) 
     throw new ApiError(404, "Payment transaction not found.");
   }
 
+  const reconciledPaymentAttempt = await reconcilePaymentAttemptStatus(
+    paymentAttempt,
+  );
+
   return {
     customer: sanitizeCustomer(customer),
     cart: await getUserCart(customer.id),
-    paymentAttempt: serializeAdminPaymentAttempt(paymentAttempt),
+    paymentAttempt: serializeAdminPaymentAttempt(reconciledPaymentAttempt),
   };
 };
 

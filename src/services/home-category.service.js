@@ -1,7 +1,5 @@
-const { HOME_CATEGORY_ITEM_SEED } = require("../data/home-category-items.seed");
 const { env } = require("../config/env");
 const {
-  countHomeCategoryItemsByOrganizationId,
   createHomeCategoryItem,
   deleteHomeCategoryItem,
   findHomeCategoryItemById,
@@ -209,43 +207,11 @@ const deleteAdminHomeCategoryItem = async (itemId, organizationId) => {
   return sanitizeHomeCategoryItem(item);
 };
 
-const seedHomeCategoryItems = async () => {
-  const organization = await resolveDefaultOrganization();
-
-  if (!organization) {
-    return;
-  }
-
-  return seedHomeCategoryItemsForOrganization(organization.id, organization.slug);
-};
-
-const seedHomeCategoryItemsForOrganization = async (
-  organizationId,
-  organizationSlug = "organization",
-) => {
-  if ((await countHomeCategoryItemsByOrganizationId(organizationId)) > 0) {
-    return;
-  }
-
-  for (const item of HOME_CATEGORY_ITEM_SEED) {
-    await createHomeCategoryItem({
-      organizationId,
-      ...item,
-    });
-  }
-
-  console.log(
-    `Seeded ${HOME_CATEGORY_ITEM_SEED.length} home category items for ${organizationSlug}.`,
-  );
-};
-
 module.exports = {
   createAdminHomeCategoryItem,
   deleteAdminHomeCategoryItem,
   getAdminHomeCategoryItem,
   listAdminHomeCategoryItems,
   listPublicHomeCategoryItems,
-  seedHomeCategoryItems,
-  seedHomeCategoryItemsForOrganization,
   updateAdminHomeCategoryItem,
 };

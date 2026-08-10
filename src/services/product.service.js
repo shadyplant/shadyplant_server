@@ -1,14 +1,8 @@
-const { PRODUCT_SEED } = require("../data/products.seed");
 const {
-  countProducts,
-  createManyProducts,
   findProductById,
   listProducts,
-  syncProductOptionGroups,
-  syncProductStockValues,
   syncProductIdentifiers,
   syncProductImages,
-  syncSeedProductMetadata,
 } = require("../repositories/product.repository");
 const {
   REVIEW_STATUSES,
@@ -250,41 +244,6 @@ const getMyProductStockAlerts = async (userId) => {
   };
 };
 
-const seedProductCatalog = async () => {
-  const productCount = await countProducts();
-
-  if (productCount === 0) {
-    await createManyProducts(PRODUCT_SEED);
-    console.log(`Seeded ${PRODUCT_SEED.length} products into MongoDB.`);
-  }
-
-  const syncedIdentifierCount = await syncProductIdentifiers();
-  const syncedCount = await syncProductImages();
-  const syncedMetadataCount = await syncSeedProductMetadata(PRODUCT_SEED);
-  const syncedStockCount = await syncProductStockValues(PRODUCT_SEED);
-  const syncedOptionGroupCount = await syncProductOptionGroups(PRODUCT_SEED);
-
-  if (syncedIdentifierCount > 0) {
-    console.log(`Synchronized product identifiers for ${syncedIdentifierCount} products.`);
-  }
-
-  if (syncedCount > 0) {
-    console.log(`Synchronized image galleries for ${syncedCount} products.`);
-  }
-
-  if (syncedMetadataCount > 0) {
-    console.log(`Synchronized metadata for ${syncedMetadataCount} seeded products.`);
-  }
-
-  if (syncedStockCount > 0) {
-    console.log(`Backfilled stock values for ${syncedStockCount} products.`);
-  }
-
-  if (syncedOptionGroupCount > 0) {
-    console.log(`Backfilled option groups for ${syncedOptionGroupCount} products.`);
-  }
-};
-
 module.exports = {
   createProductStockAlert,
   createProductReview,
@@ -293,5 +252,4 @@ module.exports = {
   getProductDetails,
   getMyProductStockAlerts,
   getProducts,
-  seedProductCatalog,
 };

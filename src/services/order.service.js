@@ -6,10 +6,14 @@ const {
   listOrdersByUserId,
   updateOrder,
 } = require("../repositories/order.repository");
+const { findProductsByIds } = require("../repositories/product.repository");
 const { ApiError } = require("../utils/apiError");
 const { generateId } = require("../utils/crypto");
 const { isValidPhoneNumber, isValidPostalCode } = require("../utils/validators");
 const { sendOrderStatusEmail } = require("../mailer");
+const {
+  createOrderStatusNotification,
+} = require("./notification.service");
 const {
   PAYMENT_METHODS,
   assertUserCanUsePaymentMethod,
@@ -706,9 +710,45 @@ const buildTrackingTimeline = (order) => {
   });
 };
 
-const serializeOrder = (order) => {
+const resolveOrderItemImages = (item = {}, productLookup = null) => {
+  const sourceImages = [
+    ...(Array.isArray(item.images) ? item.images : []),
+    item.image,
+    ...(Array.isArray(productLookup?.images) ? productLookup.images : []),
+    productLookup?.image,
+  ];
+
+  return [...new Set(
+    sourceImages
+      .map((image) => String(image || "").trim())
+      .filter(Boolean),
+  )].slice(0, 3);
+};
+
+const serializeOrder = async (order) => {
   const currentStatus = resolveOrderStatus(order);
   const refundRequest = buildOrderRefundRequest(order);
+  const orderItems = Array.isArray(order.orderItems) ? order.orderItems : [];
+  const productIds = [...new Set(
+    orderItems
+      .map((item) => String(item.productId || "").trim())
+      .filter(Boolean),
+  )];
+  const products = productIds.length ? await findProductsByIds(productIds) : [];
+  const productsById = new Map(
+    products.map((product) => [String(product.id || "").trim(), product]),
+  );
+  const nextOrderItems = orderItems.map((item) => {
+    const productLookup =
+      productsById.get(String(item.productId || "").trim()) || null;
+    const images = resolveOrderItemImages(item, productLookup);
+
+    return {
+      ...item,
+      image: images[0] || item.image || "",
+      images,
+    };
+  });
 
   return {
     id: order.id,
@@ -722,7 +762,7 @@ const serializeOrder = (order) => {
     quantitySqft: order.quantitySqft,
     distanceKm: order.distanceKm,
     vehicle: order.vehicle,
-    orderItems: order.orderItems || [],
+    orderItems: nextOrderItems,
     billingDetails: order.billingDetails || {},
     deliveryLocation: order.deliveryLocation || {},
     paymentMethod: order.paymentMethod,
@@ -761,8 +801,9 @@ const createPreparedOrder = async (preparedOrder, overrides = {}) => {
     ...overrides,
   });
 
-  const serializedOrder = serializeOrder(order);
+  const serializedOrder = await serializeOrder(order);
   await notifyOrderPrimaryStatus(serializedOrder, serializedOrder.currentStatus);
+  await createOrderStatusNotification(order, serializedOrder.currentStatus);
   return serializedOrder;
 };
 
@@ -784,9 +825,10 @@ const createUserOrder = async (userId, payload) => {
 const listUserOrders = async (userId, payload = {}) => {
   const pagination = normalizeListPagination(payload);
   const result = await listOrdersByUserId(userId, pagination);
+  const orders = await Promise.all(result.rows.map(serializeOrder));
 
   return {
-    orders: result.rows.map(serializeOrder),
+    orders,
     pagination: buildPaginationMetadata(pagination, result.totalCount),
   };
 };

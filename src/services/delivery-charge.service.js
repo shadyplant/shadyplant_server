@@ -582,7 +582,10 @@ const seedDefaultDeliveryChargeConfiguration = async () => {
     }
 
     for (const slab of slabs) {
-      const existing = await findDeliveryChargeSlabByRuleKey(profile.id, slab.ruleKey);
+      const existing = await findDeliveryChargeSlabByRuleKey(
+        profile.id,
+        slab.ruleKey,
+      );
       if (existing) {
         continue;
       }
@@ -620,8 +623,42 @@ const bootstrapDeliveryChargeConfiguration = async () => {
 };
 
 const listDeliveryChargeProfiles = async (query = {}) => {
-  const profiles = await listDeliveryChargeProfileRecords(query);
-  return profiles.map(serializeProfile);
+  const { profiles } = getDeliveryChargeConfigurationSnapshot();
+  const normalizedQuery = normalizeString(query?.search || query?.q);
+  const normalizedCode = normalizeKey(query?.code);
+  const normalizedActive = query?.isActive;
+
+  return profiles
+    .filter((profile) => {
+      if (normalizedCode && normalizeKey(profile.code) !== normalizedCode) {
+        return false;
+      }
+
+      if (normalizedActive !== undefined && normalizedActive !== null && normalizedActive !== "") {
+        const nextActive = String(normalizedActive).toLowerCase();
+        if (nextActive === "true" || nextActive === "false") {
+          if (Boolean(profile.isActive) !== (nextActive === "true")) {
+            return false;
+          }
+        }
+      }
+
+      if (normalizedQuery) {
+        const haystack = [
+          profile.code,
+          profile.name,
+          profile.description,
+          JSON.stringify(profile.metadata || {}),
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        return haystack.includes(normalizedQuery.toLowerCase());
+      }
+
+      return true;
+    })
+    .map((profile) => ({ ...profile }));
 };
 
 const getDeliveryChargeProfile = async (profileCode) => {
@@ -630,8 +667,9 @@ const getDeliveryChargeProfile = async (profileCode) => {
     return null;
   }
 
-  const profile = await findDeliveryChargeProfileByCode(normalizedProfileCode);
-  return serializeProfile(profile);
+  const { profiles } = getDeliveryChargeConfigurationSnapshot();
+  const profile = profiles.find((entry) => normalizeKey(entry.code) === normalizedProfileCode);
+  return profile ? { ...profile } : null;
 };
 
 const updateDeliveryChargeProfile = async (profileCode, payload = {}) => {
@@ -669,13 +707,48 @@ const updateDeliveryChargeProfile = async (profileCode, payload = {}) => {
 };
 
 const listDeliveryChargeSlabs = async (query = {}) => {
-  const slabs = await listDeliveryChargeSlabRecords(query);
-  return slabs.map(serializeSlab);
+  const { slabs } = getDeliveryChargeConfigurationSnapshot();
+  const normalizedQuery = normalizeString(query?.search || query?.q);
+  const normalizedProfileCode = normalizeKey(query?.profileCode || query?.profile_code);
+
+  const flattenedSlabs = Object.entries(slabs).flatMap(([profileCode, profileSlabs]) =>
+    profileSlabs.map((slab) => ({
+      ...slab,
+      profileCode,
+    })),
+  );
+
+  return flattenedSlabs
+    .filter((slab) => {
+      if (normalizedProfileCode && normalizeKey(slab.profileCode) !== normalizedProfileCode) {
+        return false;
+      }
+
+      if (!normalizedQuery) {
+        return true;
+      }
+
+      const haystack = [
+        slab.ruleKey,
+        slab.name,
+        slab.description,
+        slab.notes,
+        slab.profileCode,
+        JSON.stringify(slab.metadata || {}),
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(normalizedQuery.toLowerCase());
+    })
+    .map((slab) => ({ ...slab }));
 };
 
 const getDeliveryChargeSlab = async (slabId) => {
-  const slab = await findDeliveryChargeSlabById(slabId);
-  return serializeSlab(slab);
+  const { slabs } = getDeliveryChargeConfigurationSnapshot();
+  const flattenedSlabs = Object.values(slabs).flat();
+  const slab = flattenedSlabs.find((entry) => String(entry.id || "").trim() === String(slabId || "").trim());
+  return slab ? { ...slab } : null;
 };
 
 const normalizeSlabPayload = async (payload = {}, existingSlab = null) => {
@@ -1015,16 +1088,6 @@ const listDeliveryChargeProfilesForAdmin = async (query = {}) => listDeliveryCha
 const listDeliveryChargeSlabsForAdmin = async (query = {}) => listDeliveryChargeSlabs(query);
 
 const getDeliveryChargeProfilesSnapshotForAdmin = () => getDeliveryChargeConfigurationSnapshot();
-
-deliveryChargeCache = buildCache(
-  cloneDefaultProfiles(),
-  Object.entries(cloneDefaultSlabs()).flatMap(([profileCode, slabs]) =>
-    slabs.map((slab) => ({
-      ...slab,
-      profileCode,
-    })),
-  ),
-);
 
 module.exports = {
   bootstrapDeliveryChargeConfiguration,

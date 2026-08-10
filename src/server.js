@@ -4,11 +4,9 @@ const { closeMongo, initializeMongo } = require("./config/mongo");
 const { closePostgres, initializePostgres } = require("./config/postgres");
 const { closeRedis, initializeRedis } = require("./config/redis");
 const {
-  bootstrapDeliveryChargeConfiguration,
+  refreshDeliveryChargeCache,
 } = require("./services/delivery-charge.service");
 const { bootstrapAdminWorkspace } = require("./services/admin.service");
-const { seedHomeCategoryItems } = require("./services/home-category.service");
-const { seedProductCatalog } = require("./services/product.service");
 
 let server;
 
@@ -34,18 +32,32 @@ const shutdown = async (signal) => {
 
 const bootstrap = async () => {
   await initializePostgres();
+  await refreshDeliveryChargeCache();
   await bootstrapAdminWorkspace();
-  await bootstrapDeliveryChargeConfiguration();
   await initializeRedis();
   await initializeMongo();
-  await seedProductCatalog();
-  await seedHomeCategoryItems();
 
   server = app.listen(env.port, () => {
     console.log(
       `ShadyPlant server listening on http://localhost:${env.port}`,
     );
   });
+};
+
+const handleFatalError = async (label, error) => {
+  console.error(label, error);
+
+  try {
+    if (server) {
+      await new Promise((resolve) => {
+        server.close(() => resolve());
+      });
+    }
+  } catch (shutdownError) {
+    console.error("Failed during fatal shutdown:", shutdownError);
+  } finally {
+    await Promise.allSettled([closeMongo(), closeRedis(), closePostgres()]);
+  }
 };
 
 bootstrap().catch(async (error) => {
@@ -64,6 +76,20 @@ process.on("SIGINT", () => {
 process.on("SIGTERM", () => {
   shutdown("SIGTERM").catch((error) => {
     console.error("Shutdown error:", error);
+    process.exit(1);
+  });
+});
+
+process.on("uncaughtException", (error) => {
+  void handleFatalError("[FATAL] Uncaught exception", error).finally(() => {
+    process.exit(1);
+  });
+});
+
+process.on("unhandledRejection", (reason) => {
+  const error = reason instanceof Error ? reason : new Error(String(reason));
+
+  void handleFatalError("[FATAL] Unhandled rejection", error).finally(() => {
     process.exit(1);
   });
 });

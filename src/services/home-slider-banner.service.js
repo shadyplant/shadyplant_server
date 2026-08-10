@@ -1,7 +1,5 @@
-const { HOME_SLIDER_BANNER_SEED } = require("../data/home-slider-banners.seed");
 const { env } = require("../config/env");
 const {
-  countHomeSliderBannersByOrganizationId,
   createHomeSliderBanner,
   deleteHomeSliderBanner,
   findHomeSliderBannerById,
@@ -215,43 +213,11 @@ const deleteAdminHomeSliderBanner = async (itemId, organizationId) => {
   return sanitizeHomeSliderBanner(item);
 };
 
-const seedHomeSliderBanners = async () => {
-  const organization = await resolveDefaultOrganization();
-
-  if (!organization) {
-    return;
-  }
-
-  return seedHomeSliderBannersForOrganization(organization.id, organization.slug);
-};
-
-const seedHomeSliderBannersForOrganization = async (
-  organizationId,
-  organizationSlug = "organization",
-) => {
-  if ((await countHomeSliderBannersByOrganizationId(organizationId)) > 0) {
-    return;
-  }
-
-  for (const item of HOME_SLIDER_BANNER_SEED) {
-    await createHomeSliderBanner({
-      organizationId,
-      ...item,
-    });
-  }
-
-  console.log(
-    `Seeded ${HOME_SLIDER_BANNER_SEED.length} home slider banners for ${organizationSlug}.`,
-  );
-};
-
 module.exports = {
   createAdminHomeSliderBanner,
   deleteAdminHomeSliderBanner,
   getAdminHomeSliderBanner,
   listAdminHomeSliderBanners,
   listPublicHomeSliderBanners,
-  seedHomeSliderBanners,
-  seedHomeSliderBannersForOrganization,
   updateAdminHomeSliderBanner,
 };

@@ -7,6 +7,7 @@ const {
   claimPaymentAttemptForFinalization,
   createPaymentAttempt,
   findPaymentAttemptById,
+  findPaymentAttemptByGatewayOrderId,
   updatePaymentAttempt,
 } = require("../repositories/payment.repository");
 const {
@@ -22,6 +23,7 @@ const {
   createRemotePaymentOrder,
   ensurePaymentGatewayCheckoutConfigured,
   ensurePaymentGatewayWebhookConfigured,
+  getRemotePaymentOrderStatus,
   verifyPaymentGatewayWebhookAuthorization,
 } = require("./payment-gateway.service");
 const { createPreparedOrder, prepareOrderForUser } = require("./order.service");
@@ -56,6 +58,25 @@ const normalizeGatewayState = (value) => normalizeString(value).toUpperCase();
 const toExpectedAmountPaisa = (amount) =>
   Math.round(Number(amount || 0) * 100);
 
+const logPaymentWebhookEvent = (level, message, details = {}) => {
+  const payload = {
+    ...details,
+    timestamp: new Date().toISOString(),
+  };
+
+  if (level === "error") {
+    console.error(message, payload);
+    return;
+  }
+
+  if (level === "warn") {
+    console.warn(message, payload);
+    return;
+  }
+
+  console.info(message, payload);
+};
+
 const getPaymentAttemptProvider = (paymentAttempt) =>
   normalizeString(paymentAttempt?.gateway?.provider) || "";
 
@@ -77,15 +98,94 @@ const extractGatewayWebhookPayload = (event = {}, provider = "phonepe") => {
   if (provider === "cashfree") {
     const order = event?.data?.order || event?.order || {};
     const payment = event?.data?.payment || event?.payment || {};
+    const link = event?.data?.link || event?.link || event?.data || {};
+    const paymentGatewayDetails =
+      event?.data?.payment_gateway_details ||
+      event?.payment_gateway_details ||
+      {};
     const errorDetails = payment?.error_details || event?.data?.error_details || {};
+    const eventName =
+      normalizeString(event?.type) ||
+      normalizeString(event?.event) ||
+      normalizeString(event?.name);
+    const isLinkWebhook =
+      eventName.startsWith("PAYMENT_LINK_") ||
+      Boolean(event?.data?.link_id || event?.link_id || link?.link_id);
+
+    if (isLinkWebhook) {
+      const linkId = normalizeString(
+        event?.data?.link_id || event?.link_id || link?.link_id,
+      );
+      const linkStatus = normalizeString(
+        event?.data?.link_status ||
+          event?.order_status ||
+          link?.link_status ||
+          order?.order_status,
+      );
+      const orderAmount = Number(
+        event?.data?.order_amount ||
+          event?.order_amount ||
+          link?.link_amount ||
+          order?.order_amount,
+      );
+      const paidAmount = Number(
+        event?.data?.link_amount_paid || link?.link_amount_paid || 0,
+      );
+
+      return {
+        eventName,
+        payload: {
+          merchantOrderId: linkId,
+          linkId,
+          orderId: normalizeString(
+            event?.data?.order_id || event?.order_id || order?.order_id,
+          ),
+          state: linkStatus,
+          amount: Number.isFinite(orderAmount)
+            ? toExpectedAmountPaisa(orderAmount)
+            : undefined,
+          paidAmount: Number.isFinite(paidAmount)
+            ? toExpectedAmountPaisa(paidAmount)
+            : undefined,
+          raw: event,
+        },
+        paymentDetail: {
+          transactionId: normalizeString(
+            event?.data?.cf_payment_id ||
+              event?.cf_payment_id ||
+              payment?.cf_payment_id,
+          ),
+          paymentMode: normalizeString(
+            payment?.payment_method || link?.payment_method,
+          ),
+          state: linkStatus,
+          amount: Number.isFinite(paidAmount)
+            ? toExpectedAmountPaisa(paidAmount)
+            : undefined,
+          rail: payment?.payment_method || {},
+          instrument: payment?.payment_method || {},
+          errorCode: normalizeString(payment?.error_code),
+          detailedErrorCode: normalizeString(payment?.error_description),
+        },
+        paymentDetails: payment ? [payment] : [],
+      };
+    }
 
     return {
-      eventName:
-        normalizeString(event?.type) ||
-        normalizeString(event?.event) ||
-        normalizeString(event?.name),
+      eventName,
       payload: {
-        merchantOrderId: normalizeString(order?.order_id),
+        merchantOrderId: normalizeString(
+          paymentGatewayDetails?.gateway_order_reference_id ||
+            paymentGatewayDetails?.gateway_order_id ||
+            order?.order_tags?.payment_attempt_id ||
+            order?.order_tags?.merchant_order_id ||
+            order?.order_tags?.cf_link_id ||
+            order?.order_id,
+        ),
+        gatewayOrderReferenceId: normalizeString(
+          paymentGatewayDetails?.gateway_order_reference_id,
+        ),
+        gatewayOrderId: normalizeString(paymentGatewayDetails?.gateway_order_id),
         orderId: normalizeString(order?.cf_order_id),
         state:
           normalizeString(payment?.payment_status) ||
@@ -133,13 +233,49 @@ const extractGatewayWebhookPayload = (event = {}, provider = "phonepe") => {
 
 const locatePaymentAttempt = async (eventPayload, provider = "phonepe") => {
   const { payload } = extractGatewayWebhookPayload(eventPayload, provider);
-  const paymentAttemptId = normalizeString(payload?.merchantOrderId);
+  const candidates = [
+    payload?.merchantOrderId,
+    payload?.gatewayOrderReferenceId,
+    payload?.gatewayOrderId,
+    payload?.linkId,
+    payload?.orderId,
+    eventPayload?.data?.payment_gateway_details?.gateway_order_reference_id,
+    eventPayload?.data?.payment_gateway_details?.gateway_order_id,
+    eventPayload?.data?.order?.order_tags?.payment_attempt_id,
+    eventPayload?.data?.order?.order_tags?.merchant_order_id,
+    eventPayload?.data?.order?.order_tags?.cf_link_id,
+    eventPayload?.data?.payment?.cf_payment_id,
+  ]
+    .map((value) => normalizeString(value))
+    .filter(Boolean);
 
-  if (!paymentAttemptId) {
+  if (!candidates.length) {
+    logPaymentWebhookEvent("warn", "[Payments][Webhook] No payment lookup candidates were present.", {
+      provider,
+    });
     return null;
   }
 
-  return findPaymentAttemptById(paymentAttemptId);
+  for (const candidate of candidates) {
+    const paymentAttempt =
+      (await findPaymentAttemptById(candidate)) ||
+      (await findPaymentAttemptByGatewayOrderId(candidate));
+
+    if (paymentAttempt) {
+      logPaymentWebhookEvent("[Payments][Webhook] Payment attempt resolved from webhook reference.", {
+        provider,
+        candidate,
+        paymentAttemptId: paymentAttempt.id,
+      });
+      return paymentAttempt;
+    }
+  }
+
+  logPaymentWebhookEvent("warn", "[Payments][Webhook] Payment attempt lookup failed for all candidates.", {
+    provider,
+    candidates,
+  });
+  return null;
 };
 
 const assertWebhookProviderMatchesPaymentAttempt = (paymentAttempt, provider) => {
@@ -276,14 +412,35 @@ const createPaymentCheckout = async (userId, payload) => {
 };
 
 const getPaymentAttemptStatus = async (userId, paymentAttemptId) => {
-  const paymentAttempt = await findPaymentAttemptById(paymentAttemptId);
+  if (!isUuid(paymentAttemptId)) {
+    throw new ApiError(404, "Payment attempt not found.");
+  }
+
+  let paymentAttempt = await findPaymentAttemptById(paymentAttemptId);
 
   if (!paymentAttempt || paymentAttempt.userId !== userId) {
     throw new ApiError(404, "Payment attempt not found.");
   }
 
+  if (
+    paymentAttempt.status !== "completed" &&
+    normalizeString(paymentAttempt.gateway?.provider) === "cashfree"
+  ) {
+    try {
+      paymentAttempt = await syncCashfreePaymentAttempt(paymentAttempt);
+    } catch {
+      // Keep the existing status if remote reconciliation fails.
+    }
+  }
+
   return serializePaymentAttempt(paymentAttempt);
 };
+
+const isUuid = (value) =>
+  typeof value === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value.trim(),
+  );
 
 const buildGatewayPaymentDetails = (paymentAttempt, event) => {
   const provider =
@@ -563,6 +720,111 @@ const markFailedPayment = async (paymentAttempt, event) => {
   };
 };
 
+const syncCashfreePaymentAttempt = async (paymentAttempt) => {
+  const provider =
+    normalizeString(paymentAttempt.gateway?.provider) || env.paymentGateway.provider;
+
+  if (provider !== "cashfree") {
+    return paymentAttempt;
+  }
+
+  const paymentReference =
+    normalizeString(paymentAttempt.gateway?.merchantOrderId) || paymentAttempt.id;
+
+  if (!paymentReference) {
+    logPaymentWebhookEvent("warn", "[Payments][Webhook] Cashfree sync skipped: missing merchant order reference.", {
+      paymentAttemptId: paymentAttempt.id,
+      provider,
+    });
+    return paymentAttempt;
+  }
+
+  const remoteStatus = await getRemotePaymentOrderStatus(paymentReference, {
+    provider: "cashfree",
+  });
+  const remoteState = normalizeString(remoteStatus?.state).toUpperCase();
+  const remoteAmount = Number(remoteStatus?.amount || paymentAttempt.amount || 0);
+
+  logPaymentWebhookEvent("[Payments][Webhook] Cashfree reconciliation checked.", {
+    paymentAttemptId: paymentAttempt.id,
+    provider,
+    paymentReference,
+    remoteState,
+    remoteAmount,
+  });
+
+  if (["PAID", "COMPLETED", "SUCCESS"].includes(remoteState)) {
+    const result = await finalizeSuccessfulPayment(paymentAttempt, {
+      type: "PAYMENT_LINK_EVENT",
+      data: {
+        link_id: paymentReference,
+        link_status: "PAID",
+        link_amount: remoteAmount,
+        order_id: remoteStatus?.orderId || "",
+        payment_status: "SUCCESS",
+        payment_amount: remoteAmount,
+        payment: {
+          cf_payment_id:
+            remoteStatus?.paymentDetails?.[0]?.transactionId ||
+            remoteStatus?.orderId ||
+            "",
+          payment_status: "SUCCESS",
+          payment_amount: remoteAmount,
+          payment_method:
+            remoteStatus?.paymentDetails?.[0]?.paymentMode || "",
+        },
+      },
+    });
+
+    logPaymentWebhookEvent("[Payments][Webhook] Cashfree reconciliation finalized payment as success.", {
+      paymentAttemptId: paymentAttempt.id,
+      provider,
+      paymentReference,
+      remoteState,
+      result,
+    });
+
+    return result;
+  }
+
+  if (["FAILED", "EXPIRED", "CANCELLED"].includes(remoteState)) {
+    const result = await markFailedPayment(paymentAttempt, {
+      type: "PAYMENT_LINK_EVENT",
+      data: {
+        link_id: paymentReference,
+        link_status: remoteState,
+        link_amount: remoteAmount,
+        payment_status: "FAILED",
+        payment_amount: remoteAmount,
+        payment: {
+          error_details: {
+            error_description: `Payment link ${remoteState.toLowerCase()}.`,
+          },
+        },
+      },
+    });
+
+    logPaymentWebhookEvent("[Payments][Webhook] Cashfree reconciliation marked payment as failed.", {
+      paymentAttemptId: paymentAttempt.id,
+      provider,
+      paymentReference,
+      remoteState,
+      result,
+    });
+
+    return result;
+  }
+
+  logPaymentWebhookEvent("[Payments][Webhook] Cashfree reconciliation left payment pending.", {
+    paymentAttemptId: paymentAttempt.id,
+    provider,
+    paymentReference,
+    remoteState,
+  });
+
+  return paymentAttempt;
+};
+
 const processPaymentWebhook = async ({
   authorization,
   signature,
@@ -579,9 +841,23 @@ const processPaymentWebhook = async ({
   });
   await ensurePaymentGatewayWebhookConfigured(provider);
 
+  const normalizedEventName = normalizeString(event?.type || event?.event || event?.name);
+  logPaymentWebhookEvent("[Payments][Webhook] Incoming webhook received.", {
+    provider,
+    eventName: normalizedEventName,
+    hasRawBody: Boolean(rawBody),
+    rawBodyLength: Buffer.isBuffer(rawBody)
+      ? rawBody.length
+      : String(rawBody || "").length,
+  });
+
   const paymentAttempt = await locatePaymentAttempt(event, provider);
 
   if (!paymentAttempt) {
+    logPaymentWebhookEvent("warn", "[Payments][Webhook] Webhook ignored: payment attempt not found.", {
+      provider,
+      eventName: normalizedEventName,
+    });
     return {
       processed: false,
       ignored: true,
@@ -600,12 +876,31 @@ const processPaymentWebhook = async ({
   );
   const gatewayState = normalizeGatewayState(payload?.state);
 
+  logPaymentWebhookEvent("[Payments][Webhook] Webhook matched payment attempt.", {
+    provider: matchedProvider,
+    paymentAttemptId: paymentAttempt.id,
+    gatewayState,
+    eventName,
+    merchantOrderId: payload?.merchantOrderId || null,
+    linkId: payload?.linkId || null,
+    orderId: payload?.orderId || null,
+    amount: payload?.amount ?? null,
+  });
+
   if (
     ["COMPLETED", "SUCCESS", "PAID"].includes(gatewayState) ||
     eventName === "checkout.order.completed" ||
     eventName === "PAYMENT_SUCCESS_WEBHOOK"
   ) {
-    return finalizeSuccessfulPayment(paymentAttempt, event);
+    const result = await finalizeSuccessfulPayment(paymentAttempt, event);
+    logPaymentWebhookEvent("[Payments][Webhook] Webhook processed as success.", {
+      provider: matchedProvider,
+      paymentAttemptId: paymentAttempt.id,
+      gatewayState,
+      eventName,
+      result,
+    });
+    return result;
   }
 
   if (
@@ -613,8 +908,23 @@ const processPaymentWebhook = async ({
     eventName === "checkout.order.failed" ||
     eventName === "PAYMENT_FAILED_WEBHOOK"
   ) {
-    return markFailedPayment(paymentAttempt, event);
+    const result = await markFailedPayment(paymentAttempt, event);
+    logPaymentWebhookEvent("[Payments][Webhook] Webhook processed as failure.", {
+      provider: matchedProvider,
+      paymentAttemptId: paymentAttempt.id,
+      gatewayState,
+      eventName,
+      result,
+    });
+    return result;
   }
+
+  logPaymentWebhookEvent("warn", "[Payments][Webhook] Webhook ignored: unhandled state.", {
+    provider: matchedProvider,
+    paymentAttemptId: paymentAttempt.id,
+    gatewayState,
+    eventName,
+  });
 
   return {
     processed: false,
@@ -624,10 +934,18 @@ const processPaymentWebhook = async ({
 };
 
 const verifyPaymentAttempt = async (userId, paymentAttemptId) => {
-  const paymentAttempt = await findPaymentAttemptById(paymentAttemptId);
+  let paymentAttempt = await findPaymentAttemptById(paymentAttemptId);
 
   if (!paymentAttempt || paymentAttempt.userId !== userId) {
     throw new ApiError(404, "Payment attempt not found.");
+  }
+
+  if (normalizeString(paymentAttempt.gateway?.provider) === "cashfree") {
+    try {
+      paymentAttempt = await syncCashfreePaymentAttempt(paymentAttempt);
+    } catch {
+      // Keep the current attempt if remote reconciliation fails.
+    }
   }
 
   if (paymentAttempt.status === "completed" && paymentAttempt.orderId) {
@@ -646,9 +964,26 @@ const verifyPaymentAttempt = async (userId, paymentAttemptId) => {
   return serializePaymentAttempt(paymentAttempt);
 };
 
+const reconcilePaymentAttemptStatus = async (paymentAttempt) => {
+  if (!paymentAttempt) {
+    return paymentAttempt;
+  }
+
+  if (normalizeString(paymentAttempt.gateway?.provider) === "cashfree") {
+    try {
+      return await syncCashfreePaymentAttempt(paymentAttempt);
+    } catch {
+      // Keep the current attempt if remote reconciliation fails.
+    }
+  }
+
+  return paymentAttempt;
+};
+
 module.exports = {
   createPaymentCheckout,
   getPaymentAttemptStatus,
   processPaymentWebhook,
+  reconcilePaymentAttemptStatus,
   verifyPaymentAttempt,
 };

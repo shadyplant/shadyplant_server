@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const QRCode = require("qrcode");
 const { env } = require("../config/env");
 const { ApiError } = require("../utils/apiError");
 const {
@@ -254,6 +255,20 @@ const toCashfreeAmountRupees = (amountPaisa) =>
 const toPaisaAmount = (amountRupees) =>
   Math.round(Number(amountRupees || 0) * 100);
 
+const buildQrCodeDataUrl = async (value) => {
+  const paymentUrl = normalizeString(value);
+
+  if (!paymentUrl) {
+    return "";
+  }
+
+  return QRCode.toDataURL(paymentUrl, {
+    errorCorrectionLevel: "M",
+    margin: 1,
+    scale: 6,
+  });
+};
+
 const buildPaymentWebhookUrl = () => {
   const baseUrl = normalizeString(env.server.publicBaseUrl).replace(/\/+$/, "");
 
@@ -285,47 +300,59 @@ const createPhonePeOrder = async (input) => {
 
 const createCashfreeOrder = async (input) => {
   const payload = {
-    order_id: input.merchantOrderId,
-    order_amount: toCashfreeAmountRupees(input.amount),
-    order_currency: normalizeString(input.currency || "INR") || "INR",
-    order_note: normalizeString(input.description || input.paymentFlow?.message),
     customer_details: {
-      customer_id: normalizeString(input.customerId || input.metaInfo?.udf3 || input.merchantOrderId),
-      customer_name: normalizeString(input.customerName || ""),
       customer_email: normalizeString(input.customerEmail || ""),
+      customer_name: normalizeString(input.customerName || ""),
       customer_phone: normalizeString(
         input.customerPhone ||
           input.prefillUserLoginDetails?.phoneNumber ||
           "",
       ),
     },
-    order_meta: {
-      return_url:
-        normalizeString(input.returnUrl) ||
-        normalizeString(input.paymentFlow?.merchantUrls?.redirectUrl),
-      notify_url: buildPaymentWebhookUrl() || undefined,
-      payment_methods: "",
-    },
-    order_expiry_time:
+    link_amount: toCashfreeAmountRupees(input.amount),
+    link_auto_reminders: true,
+    link_currency: normalizeString(input.currency || "INR") || "INR",
+    link_expiry_time:
       Number(input.expireAfter || 0) > 0
         ? new Date(Date.now() + Number(input.expireAfter) * 1000).toISOString()
         : undefined,
+    link_id: input.merchantOrderId,
+    link_meta: {
+      notify_url: buildPaymentWebhookUrl() || undefined,
+      return_url: normalizeString(input.returnUrl),
+      upi_intent: false,
+    },
+    link_notes: {
+      payment_attempt_id: normalizeString(input.merchantOrderId),
+      description: normalizeString(input.description || input.paymentFlow?.message),
+    },
+    link_notify: {
+      send_email: true,
+      send_sms: false,
+      send_whatsapp: false,
+    },
+    link_partial_payments: false,
+    link_purpose: normalizeString(input.description || input.paymentFlow?.message),
+    enable_invoice: false,
   };
 
-  const response = await requestCashfreeJson("/orders", {
+  const response = await requestCashfreeJson("/links", {
     method: "POST",
     body: payload,
   });
 
+  const paymentLinkUrl = normalizeString(response.link_url);
+
   return {
     provider: "cashfree",
-    merchantOrderId: response.order_id || input.merchantOrderId,
-    orderId: response.cf_order_id || response.order_id,
-    redirectUrl: "",
-    paymentSessionId: response.payment_session_id || "",
-    amount: toPaisaAmount(response.order_amount || payload.order_amount),
-    state: response.order_status || "ACTIVE",
-    expireAt: response.order_expiry_time || null,
+    merchantOrderId: input.merchantOrderId,
+    orderId: response.link_id || response.cf_link_id || input.merchantOrderId,
+    redirectUrl: paymentLinkUrl,
+    paymentSessionId: "",
+    qrCodeDataUrl: await buildQrCodeDataUrl(paymentLinkUrl),
+    amount: toPaisaAmount(response.link_amount || payload.link_amount),
+    state: response.link_status || "ACTIVE",
+    expireAt: response.link_expiry_time || null,
     raw: response,
   };
 };
@@ -369,54 +396,69 @@ const normalizeCashfreeOrderState = (value) => {
 };
 
 const getCashfreeRemoteOrderStatus = async (merchantOrderId) => {
-  const order = await requestCashfreeJson(
-    `/orders/${encodeURIComponent(merchantOrderId)}`,
+  const link = await requestCashfreeJson(
+    `/links/${encodeURIComponent(merchantOrderId)}`,
   );
 
-  let payments = [];
+  let orders = [];
   try {
-    const paymentList = await requestCashfreeJson(
-      `/orders/${encodeURIComponent(merchantOrderId)}/payments`,
+    const orderList = await requestCashfreeJson(
+      `/links/${encodeURIComponent(merchantOrderId)}/orders`,
+      {
+        searchParams: {
+          status: "PAID",
+        },
+      },
     );
 
-    payments = Array.isArray(paymentList) ? paymentList : [];
+    orders = Array.isArray(orderList)
+      ? orderList
+      : Array.isArray(orderList?.orders)
+        ? orderList.orders
+        : [];
   } catch {
-    payments = [];
+    orders = [];
   }
 
-  const successfulPayment =
-    payments.find(
-      (payment) =>
-        normalizeString(payment?.payment_status).toUpperCase() === "SUCCESS",
-    ) || payments[0] || null;
+  const successfulOrder =
+    orders.find((order) => normalizeString(order?.order_status).toUpperCase() === "PAID") ||
+    orders[0] ||
+    null;
+  const derivedState =
+    normalizeCashfreeOrderState(successfulOrder?.order_status) ||
+    normalizeCashfreeOrderState(link.link_status);
 
   return {
-    merchantOrderId: order.order_id || merchantOrderId,
-    orderId: order.cf_order_id || order.order_id || merchantOrderId,
-    state: normalizeCashfreeOrderState(order.order_status),
-    amount: toPaisaAmount(order.order_amount),
-    paymentDetails: successfulPayment
+    merchantOrderId: link.link_id || merchantOrderId,
+    orderId:
+      successfulOrder?.cf_order_id ||
+      successfulOrder?.order_id ||
+      link.cf_link_id ||
+      link.link_id ||
+      merchantOrderId,
+    state: derivedState,
+    amount: toPaisaAmount(link.link_amount),
+    paymentDetails: successfulOrder
       ? [
           {
-            transactionId: successfulPayment.cf_payment_id || "",
-            paymentMode:
-              successfulPayment.payment_group ||
-              successfulPayment.payment_method ||
-              "",
-            state: successfulPayment.payment_status || "",
-            amount: toPaisaAmount(successfulPayment.payment_amount),
-            errorCode: normalizeString(successfulPayment.error_details?.error_code),
-            detailedErrorCode: normalizeString(
-              successfulPayment.error_details?.error_description,
+            transactionId: normalizeString(
+              successfulOrder.payment_session_id || successfulOrder.cf_order_id,
             ),
-            instrument: successfulPayment.payment_method || {},
-            raw: successfulPayment,
+            paymentMode: normalizeString(
+              successfulOrder.payment_method || successfulOrder.payment_group,
+            ),
+            state: normalizeString(successfulOrder.order_status || "PAID"),
+            amount: toPaisaAmount(successfulOrder.order_amount || link.link_amount),
+            errorCode: "",
+            detailedErrorCode: "",
+            instrument: successfulOrder.payment_method || {},
+            raw: successfulOrder,
           },
         ]
       : [],
     raw: {
-      order,
-      payments,
+      link,
+      orders,
     },
   };
 };

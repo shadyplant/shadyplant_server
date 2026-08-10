@@ -1231,20 +1231,6 @@ const deleteProduct = async (productLookupId) => {
   return deletedProduct ? serializeProduct(deletedProduct) : null;
 };
 
-const countProducts = async () => Product.countDocuments();
-
-const createManyProducts = async (products) => {
-  if (!products.length) {
-    return [];
-  }
-
-  const createdProducts = await Product.insertMany(
-    products.map(prepareProductForStorage),
-    { ordered: true },
-  );
-  return createdProducts.map(serializeProduct);
-};
-
 const syncProductIdentifiers = async () => {
   const products = await Product.find({});
   let updatedCount = 0;
@@ -1315,97 +1301,6 @@ const syncProductImages = async () => {
 
   return updatedCount;
 };
-
-const syncSeedProductMetadata = async (seedProducts = []) => {
-  if (!Array.isArray(seedProducts) || !seedProducts.length) {
-    return 0;
-  }
-
-  const seedProductsById = new Map(
-    seedProducts.map((product) => [String(product.id || "").trim(), product]),
-  );
-  const productIds = [...seedProductsById.keys()].filter(Boolean);
-
-  if (!productIds.length) {
-    return 0;
-  }
-
-  const products = await Product.find({ id: { $in: productIds } });
-  let updatedCount = 0;
-
-  for (const product of products) {
-    const seedProduct = seedProductsById.get(String(product.id || "").trim());
-
-    if (!seedProduct) {
-      continue;
-    }
-
-    const normalizedTags = Array.isArray(seedProduct.tags)
-      ? [...new Set(seedProduct.tags.map((tag) => String(tag || "").trim()).filter(Boolean))]
-      : [];
-    const nextWeight = Number(seedProduct.weight || 0);
-    const nextOffer = String(seedProduct.offer || "").trim();
-    const nextMinOrderQuantity = Number(seedProduct.minOrderQuantity || 1);
-    const needsUpdate =
-      Number(product.weight || 0) !== nextWeight ||
-      String(product.offer || "").trim() !== nextOffer ||
-      Number(product.minOrderQuantity || 1) !== nextMinOrderQuantity ||
-      Boolean(product.isOnTrend) !== Boolean(seedProduct.isOnTrend) ||
-      Boolean(product.isFeaturedLatest) !== Boolean(seedProduct.isFeaturedLatest) ||
-      JSON.stringify(
-        Array.isArray(product.tags)
-          ? product.tags.map((tag) => String(tag || "").trim()).filter(Boolean)
-          : [],
-      ) !== JSON.stringify(normalizedTags);
-
-    if (!needsUpdate) {
-      continue;
-    }
-
-    product.weight = nextWeight;
-    product.offer = nextOffer;
-    product.minOrderQuantity = nextMinOrderQuantity;
-    product.isOnTrend = Boolean(seedProduct.isOnTrend);
-    product.isFeaturedLatest = Boolean(seedProduct.isFeaturedLatest);
-    product.tags = normalizedTags;
-    await product.save();
-    updatedCount += 1;
-  }
-
-  return updatedCount;
-};
-
-const syncProductStockValues = async (seedProducts = []) => {
-  const seedProductsById = new Map(
-    seedProducts.map((product) => [
-      String(product.id || "").trim(),
-      normalizeNonNegativeInteger(product.stock, DEFAULT_BACKFILL_STOCK),
-    ]),
-  );
-  const products = await Product.find({});
-  let updatedCount = 0;
-
-  for (const product of products) {
-    const currentStock = Number(product.stock);
-
-    if (Number.isFinite(currentStock) && currentStock >= 0) {
-      continue;
-    }
-
-    product.stock =
-      seedProductsById.get(String(product.id || "").trim()) ??
-      Math.max(
-        normalizePositiveInteger(product.minOrderQuantity, 1),
-        DEFAULT_BACKFILL_STOCK,
-      );
-    await product.save();
-    updatedCount += 1;
-  }
-
-  return updatedCount;
-};
-
-const syncProductOptionGroups = async () => 0;
 
 const syncProductMrpValues = async () => {
   const products = await Product.find({});
@@ -1514,9 +1409,7 @@ module.exports = {
   buildProductIdentifier,
   buildProductSkuId,
   buildProductVariantId,
-  countProducts,
   createProduct,
-  createManyProducts,
   deleteProduct,
   findProductById,
   findProductsByIds,
@@ -1535,8 +1428,5 @@ module.exports = {
   syncProductImages,
   syncProductSkuIds,
   syncProductMrpValues,
-  syncProductOptionGroups,
-  syncProductStockValues,
-  syncSeedProductMetadata,
   updateProduct,
 };
