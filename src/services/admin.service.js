@@ -195,6 +195,15 @@ const normalizeOptionalInteger = (value) => {
   return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : undefined;
 };
 
+const normalizeOptionalPositiveInteger = (value) => {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return null;
+  }
+
+  const parsedValue = Math.floor(Number(value));
+  return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : null;
+};
+
 const sendWelcomeEmailBestEffort = async ({ to, customerName, source }) => {
   console.info("[Mailer] Sending native welcome email", {
     to,
@@ -1161,6 +1170,10 @@ const normalizeProductPayload = (payload = {}, { partial = false } = {}) => {
     minOrderQuantity:
       payload.minOrderQuantity !== undefined
         ? Math.max(1, Math.round(Number(payload.minOrderQuantity || 1)))
+        : undefined,
+    maxPurchaseQuantity:
+      payload.maxPurchaseQuantity !== undefined
+        ? normalizeOptionalPositiveInteger(payload.maxPurchaseQuantity)
         : undefined,
     stock:
       payload.stock !== undefined
@@ -2602,6 +2615,8 @@ const createAdminCustomerCartPaymentCheckout = async (customerId, payload = {}) 
   const checkout = await createCartPaymentCheckout(customer.id, {
     ...checkoutPayload,
     returnPath: "/",
+  }, {
+    context: "admin",
   });
 
   return {

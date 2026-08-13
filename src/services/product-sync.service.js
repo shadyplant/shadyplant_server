@@ -143,6 +143,7 @@ const createProductDefaults = (normalizedRow) => {
           )}% off`
         : "",
     minOrderQuantity: 1,
+    maxPurchaseQuantity: null,
     stock: normalizedRow.stockQuantity,
     isOnTrend: false,
     isFeaturedLatest: false,
@@ -377,7 +378,7 @@ const syncProductsFromSheet = async (payload, options = {}) => {
         sku: { $in: validRows.map((row) => row.sku) },
       })
         .select(
-          "id productId sku skuId category brand description image images weight packLabel unit badge variant status",
+          "id productId sku skuId category brand description image images weight minOrderQuantity maxPurchaseQuantity packLabel unit badge variant status",
         )
         .lean()
     : [];
@@ -412,6 +413,14 @@ const syncProductsFromSheet = async (payload, options = {}) => {
               : Number(existingProduct.weight) > 0
                 ? Number(existingProduct.weight)
                 : defaults.weight,
+          minOrderQuantity:
+            row.minOrderQuantity ??
+            existingProduct.minOrderQuantity ??
+            defaults.minOrderQuantity,
+          maxPurchaseQuantity:
+            row.maxPurchaseQuantity ??
+            existingProduct.maxPurchaseQuantity ??
+            defaults.maxPurchaseQuantity,
           packLabel: row.variant || existingProduct.packLabel || defaults.packLabel,
           variant: row.variant || existingProduct.variant || defaults.variant,
           unit: existingProduct.unit || defaults.unit,
@@ -444,6 +453,7 @@ const syncProductsFromSheet = async (payload, options = {}) => {
         weight: createData.weight,
         offer: createData.offer,
         minOrderQuantity: createData.minOrderQuantity,
+        maxPurchaseQuantity: createData.maxPurchaseQuantity,
         stock: createData.stock,
         isOnTrend: createData.isOnTrend,
         isFeaturedLatest: createData.isFeaturedLatest,

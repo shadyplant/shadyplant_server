@@ -615,8 +615,11 @@ const placeCartOrderCashOnDelivery = async (userId, payload = {}) => {
   return serializedOrder;
 };
 
-const createCartPaymentCheckout = async (userId, payload = {}) => {
+const createCartPaymentCheckout = async (userId, payload = {}, options = {}) => {
   const provider = await ensurePaymentGatewayCheckoutConfigured();
+  const checkoutContext = String(options.context || "storefront")
+    .trim()
+    .toLowerCase();
   const paymentMethod =
     String(payload.paymentMethod || PAYMENT_METHODS.onlinePayment)
       .trim()
@@ -745,7 +748,10 @@ const createCartPaymentCheckout = async (userId, payload = {}) => {
       prefillUserLoginDetails: {
         phoneNumber: preparedOrder.phoneNumber,
       },
-    }, { provider });
+    }, {
+      provider,
+      context: checkoutContext,
+    });
 
     await updatePaymentAttempt(paymentAttempt.id, {
       status: "checkout_ready",

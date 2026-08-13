@@ -26,6 +26,7 @@ const DEFAULT_DELIVERY_CHARGE_PROFILES = [
     isActive: true,
     sortOrder: 10,
     metadata: {
+      maxWeightKg: 30000,
       states: ["assam", "jharkhand", "bihar", "west bengal"],
     },
   },
@@ -37,6 +38,7 @@ const DEFAULT_DELIVERY_CHARGE_PROFILES = [
     isActive: true,
     sortOrder: 20,
     metadata: {
+      maxWeightKg: 12500,
       states: [
         "meghalaya",
         "mizoram",
@@ -235,42 +237,10 @@ const DEFAULT_DELIVERY_CHARGE_SLABS = {
       maxDistanceInclusive: true,
     },
     {
-      ruleKey: "heavy_18000_to_25000",
-      name: "Heavy goods 18000 to 25000 kg",
-      description: "Rate for weights between 18000 and 25000 kg.",
-      sortOrder: 30,
-      calculationMode: "per_distance",
-      rate: 112,
-      minWeightKg: 18000,
-      minWeightInclusive: false,
-      maxWeightKg: 25000,
-      maxWeightInclusive: true,
-      minDistanceKm: 60,
-      minDistanceInclusive: true,
-      maxDistanceKm: 750,
-      maxDistanceInclusive: true,
-    },
-    {
-      ruleKey: "heavy_12500_to_18000",
-      name: "Heavy goods 12500 to 18000 kg",
-      description: "Rate for weights between 12500 and 18000 kg.",
-      sortOrder: 40,
-      calculationMode: "per_distance",
-      rate: 165,
-      minWeightKg: 12500,
-      minWeightInclusive: false,
-      maxWeightKg: 18000,
-      maxWeightInclusive: true,
-      minDistanceKm: 60,
-      minDistanceInclusive: true,
-      maxDistanceKm: 750,
-      maxDistanceInclusive: true,
-    },
-    {
       ruleKey: "heavy_7500_to_12500",
       name: "Heavy goods 7500 to 12500 kg",
       description: "Rate for weights between 7500 and 12500 kg.",
-      sortOrder: 50,
+      sortOrder: 30,
       calculationMode: "per_distance",
       rate: 96,
       minWeightKg: 7500,
@@ -286,7 +256,7 @@ const DEFAULT_DELIVERY_CHARGE_SLABS = {
       ruleKey: "heavy_5000_to_7500",
       name: "Heavy goods 5000 to 7500 kg",
       description: "Rate for weights between 5000 and 7500 kg.",
-      sortOrder: 60,
+      sortOrder: 40,
       calculationMode: "per_distance",
       rate: 80,
       minWeightKg: 5000,
@@ -302,7 +272,7 @@ const DEFAULT_DELIVERY_CHARGE_SLABS = {
       ruleKey: "heavy_2500_to_5000",
       name: "Heavy goods 2500 to 5000 kg",
       description: "Rate for weights between 2500 and 5000 kg.",
-      sortOrder: 70,
+      sortOrder: 50,
       calculationMode: "per_distance",
       rate: 69,
       minWeightKg: 2500,
@@ -318,7 +288,7 @@ const DEFAULT_DELIVERY_CHARGE_SLABS = {
       ruleKey: "heavy_1500_to_2500_short_distance",
       name: "Heavy goods 1500 to 2500 kg for short distance",
       description: "Special rate for 1500 to 2500 kg when distance is 60 to 300 km.",
-      sortOrder: 80,
+      sortOrder: 60,
       calculationMode: "per_distance",
       rate: 42,
       minWeightKg: 1500,
@@ -334,7 +304,7 @@ const DEFAULT_DELIVERY_CHARGE_SLABS = {
       ruleKey: "heavy_800_to_2500",
       name: "Heavy goods 800 to 2500 kg",
       description: "Fallback heavy goods rate for weights above 800 kg.",
-      sortOrder: 90,
+      sortOrder: 70,
       calculationMode: "per_distance",
       rate: 53,
       minWeightKg: 800,
@@ -998,6 +968,26 @@ const calculateCostForSlab = (slab, weight, distance) => {
   };
 };
 
+const getProfileMaxWeightKg = (profile, profileCode) => {
+  const metadataMaxWeightKg = Number(profile?.metadata?.maxWeightKg);
+
+  if (Number.isFinite(metadataMaxWeightKg) && metadataMaxWeightKg > 0) {
+    return metadataMaxWeightKg;
+  }
+
+  const normalizedProfileCode = normalizeKey(profileCode);
+
+  if (normalizedProfileCode === DEFAULT_PROFILE_CODES.panIndia) {
+    return 30000;
+  }
+
+  if (normalizedProfileCode === DEFAULT_PROFILE_CODES.northEast) {
+    return 12500;
+  }
+
+  return null;
+};
+
 const calculateTransportChargeForProfileCode = (profileCode, weight, distance) => {
   const normalizedProfileCode = normalizeKey(profileCode);
   const profile = deliveryChargeCache.profilesByCode.get(normalizedProfileCode);
@@ -1006,6 +996,15 @@ const calculateTransportChargeForProfileCode = (profileCode, weight, distance) =
     return {
       success: false,
       message: `Unsupported delivery profile: ${profileCode}.`,
+    };
+  }
+
+  const maxWeightKg = getProfileMaxWeightKg(profile, normalizedProfileCode);
+
+  if (maxWeightKg !== null && weight > maxWeightKg) {
+    return {
+      success: false,
+      message: `Warn! Weight Out Of Range — valid range is 1–${maxWeightKg} kg. Provided: ${weight} kg.`,
     };
   }
 

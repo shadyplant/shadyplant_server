@@ -69,6 +69,15 @@ const normalizeOptionalInteger = (value) => {
   return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : null;
 };
 
+const normalizeOptionalPositiveInteger = (value) => {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return null;
+  }
+
+  const parsedValue = Math.floor(Number(value));
+  return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : null;
+};
+
 const resolveMrpValue = (mrp, price) => {
   const normalizedPrice = normalizeOptionalNumber(price);
   const normalizedMrp = normalizeOptionalNumber(mrp);
@@ -627,6 +636,7 @@ const serializeProduct = (product) => {
     minOrderQuantity: Number(product.minOrderQuantity) > 0
       ? Number(product.minOrderQuantity)
       : 1,
+    maxPurchaseQuantity: normalizeOptionalPositiveInteger(product.maxPurchaseQuantity),
     stock: normalizeNonNegativeInteger(product.stock, 0),
     isOnTrend: Boolean(product.isOnTrend),
     isFeaturedLatest: Boolean(product.isFeaturedLatest),
@@ -912,6 +922,10 @@ const updateProduct = async (productLookupId, updates = {}) => {
     updates.minOrderQuantity !== undefined
       ? Number(updates.minOrderQuantity)
       : existingProduct.minOrderQuantity;
+  existingProduct.maxPurchaseQuantity =
+    updates.maxPurchaseQuantity !== undefined
+      ? normalizeOptionalPositiveInteger(updates.maxPurchaseQuantity)
+      : existingProduct.maxPurchaseQuantity;
   existingProduct.stock =
     updates.stock !== undefined
       ? normalizeNonNegativeInteger(updates.stock, 0)
